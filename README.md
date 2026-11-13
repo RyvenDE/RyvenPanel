@@ -37,6 +37,7 @@ Entwickelt für das RyvenMC-Netzwerk, frei nutzbar für jeden (MIT-Lizenz).
 | **Spieler & VPN** | Wer ist online, Login-Verlauf, VPN/Proxy-Erkennung |
 | **Nutzer & Ränge** | Money, Coins, LuckPerms-Ränge und Permissions, Bans |
 | **Wirtschaft** | Geldmenge (Inflation), woher das Geld kommt, Top-Verdiener, Shop-Statistik, Preise ändern (EconomyShopGUI), Crate-Auswertung, Verkaufssteuer |
+| **Moderation** | Reports mit Chatverlauf bearbeiten, alle Strafen (Bann, Mute, Kick, Verwarnung) mit Filter und Aufheben, Discord-Verknüpfungen, Spieler-Akte – Strafen netzwerkweit mit Vorlagen und Eskalation (RyvenBans) |
 | **Terminal** | SSH-Konsole mit mehreren Tabs |
 | **Dateien** | Datei-Manager für den ganzen Server (Upload/Download, Editor) |
 | **Docker** | Container, Stacks, Images, Netzwerke |
@@ -49,6 +50,7 @@ Entwickelt für das RyvenMC-Netzwerk, frei nutzbar für jeden (MIT-Lizenz).
 
 | | |
 |---|---|
+| ![Moderation – Reports](docs/screenshots/moderation-reports.png)<br>**Moderation – Reports:** Meldung, Vorgeschichte und Chatverlauf, direkt bestrafen | ![Moderation – Strafen](docs/screenshots/moderation-strafen.png)<br>**Moderation – Strafen:** alle Banns, Mutes, Kicks und Verwarnungen netzwerkweit |
 | ![Wirtschaft – Spieler](docs/screenshots/wirtschaft-spieler.png)<br>**Wirtschaft – Spieler:** Einnahmen und Ausgaben jedes Spielers nach Quelle | ![Shop-Preise](docs/screenshots/preise.png)<br>**Shop-Preise:** Preise direkt ändern, Warnung bei Verkauf > Kauf |
 | ![Crates](docs/screenshots/crates.png)<br>**Crates:** Öffnungen, ausgeschüttetes Geld, häufigste Gewinne | ![Team-Rechte](docs/screenshots/team-rechte.png)<br>**Team-Rechte:** Panel-Rechte pro LuckPerms-Rang |
 | ![Team-Accounts](docs/screenshots/team-accounts.png)<br>**Team-Accounts:** Logins, feste IPs, Status | ![Login](docs/screenshots/login.png)<br>**Login:** Team-Login oder Owner über Crafty |
@@ -70,7 +72,7 @@ Wirtschaft den Windows-Client „OpenSSH“ (*Einstellungen → Optionale Featur
 - **Docker** mit Crafty Controller 4 und MariaDB/MySQL als Container
 - Python 3 für den Team-Zugang
 - LuckPerms mit MySQL/MariaDB-Speicher
-- Eigene Plugins für den Datenzugriff, z. B. **RyvenEco** für die Wirtschafts-Auswertung
+- Eigene Plugins für den Datenzugriff: **RyvenEco** (Wirtschafts-Auswertung) und **RyvenLink** mit RyvenBans (Reports, Strafen, Discord-Verify)
 
 ## Erste Schritte
 

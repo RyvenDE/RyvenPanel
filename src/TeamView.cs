@@ -95,6 +95,7 @@ namespace RyvenPanel
                 "python3 -m py_compile gateway.py.new\n" +
                 "cp -p gateway.py gateway.py.v" + Regex.Replace(have, "[^0-9.]", "") + ".bak\n" +
                 "printf '%s\\n' " + Ssh.B64(EcoSource()) + " > eco.py.new && mv eco.py.new eco.py\n" +
+                "printf '%s\\n' " + Ssh.B64(ModSource()) + " > mod.py.new && python3 -m py_compile mod.py.new && mv mod.py.new mod.py\n" +
                 "mv gateway.py.new gateway.py\n" +
                 "systemctl restart ryvenpanel-gateway\nsleep 2\nsystemctl is-active ryvenpanel-gateway\n";
             var r = await getSsh().Run(script, 60000);
@@ -631,6 +632,12 @@ namespace RyvenPanel
             using (var r = new StreamReader(s, Encoding.UTF8)) return r.ReadToEnd();
         }
 
+        public static string ModSource()
+        {
+            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("mod.py"))
+            using (var r = new StreamReader(s, Encoding.UTF8)) return r.ReadToEnd();
+        }
+
         async Task Install(string portText)
         {
             int p;
@@ -651,6 +658,7 @@ namespace RyvenPanel
                     "printf '%s\\n' " + Ssh.B64(GatewaySource()) + " > /opt/ryvenpanel/gateway.py\n" +
                     "python3 -m py_compile /opt/ryvenpanel/gateway.py\n" +
                     "printf '%s\\n' " + Ssh.B64(EcoSource()) + " > /opt/ryvenpanel/eco.py\n" +
+                    "printf '%s\\n' " + Ssh.B64(ModSource()) + " > /opt/ryvenpanel/mod.py\n" +
                     "[ -f /etc/ryvenpanel/gw.key ] || openssl req -x509 -newkey rsa:2048 -nodes -keyout /etc/ryvenpanel/gw.key -out /etc/ryvenpanel/gw.crt -days 3650 -subj '/CN=RyvenPanel Team' >/dev/null 2>&1\n" +
                     "chmod 600 /etc/ryvenpanel/gw.key\n" +
                     "LP=$(for d in /opt/crafty/docker/servers/*/; do [ -f \"$d/plugins/LuckPerms/config.yml\" ] && [ ! -f \"$d/velocity.toml\" ] && echo \"$d/plugins/LuckPerms/config.yml\"; done | head -1)\n" +

@@ -29,6 +29,8 @@ namespace RyvenPanel
         FirewallView firewall;
         UserView users;
         EconomyView economy;
+        ModerationView moderation;
+        ModClient modClient;
         int mode;
         bool dockerMode { get { return mode != 0; } }
         TabBtn tabMetrics, tabAdmin;
@@ -170,6 +172,7 @@ namespace RyvenPanel
                 new object[] { null, 2, Icons.Globe, "Spieler & VPN", "Wer ist online, Login-Verlauf, VPN/Proxy-Erkennung" },
                 new object[] { null, 3, Icons.People, "Nutzer & Ränge", "Money, Coins, Ränge, Permissions, Bans" },
                 new object[] { null, 8, Icons.Chart, "Wirtschaft", "Geldfluss, Shop-Preise, Crates – wie viel Geld ist im Umlauf?" },
+                new object[] { null, 9, Icons.Block, "Moderation", "Reports, Strafen (Ban/Mute/Kick/Warn) und Discord-Verify – netzwerkweit" },
                 new object[] { "SERVER & SYSTEM", null, null, null },
                 new object[] { null, 4, Icons.Terminal, "Terminal", "SSH-Konsole des Servers" },
                 new object[] { null, 5, Icons.Folder, "Dateien", "Alle Dateien des Servers (SFTP)" },
@@ -178,20 +181,20 @@ namespace RyvenPanel
                 new object[] { "VERWALTUNG", null, null, null },
                 new object[] { null, 7, Icons.Key, "Team & Zugänge", "Team-Logins, Rechte pro Rang, IP-Freigaben, Protokoll" },
             };
-            nav = new NavItem[9];
+            nav = new NavItem[10];
             var navCtrls = new List<Control>();
             foreach (var d in navDefs)
             {
                 if (d[0] != null)
                 {
                     var cat = Theme.Lbl((string)d[0], Theme.F(7.75f, FontStyle.Bold), Theme.Muted, Theme.Side);
-                    cat.AutoSize = false; cat.Dock = DockStyle.Top; cat.Height = 30; cat.Padding = new Padding(20, 12, 0, 0);
+                    cat.AutoSize = false; cat.Dock = DockStyle.Top; cat.Height = 27; cat.Padding = new Padding(20, 10, 0, 0);
                     if (team != null && (string)d[0] != "MINECRAFT") cat.Visible = false;
                     navCtrls.Add(cat);
                     continue;
                 }
                 int idx = (int)d[1];
-                var it = new NavItem((string)d[2], (string)d[3]) { Dock = DockStyle.Top, Height = 38 }.Tip((string)d[4]);
+                var it = new NavItem((string)d[2], (string)d[3]) { Dock = DockStyle.Top, Height = 35 }.Tip((string)d[4]);
                 it.Click += (s, e) => SetMode(idx);
                 nav[idx] = it;
                 navCtrls.Add(it);
@@ -298,6 +301,9 @@ namespace RyvenPanel
             files.OpenTerminalAt = dir => { SetMode(4); terminal.Open(System.IO.Path.GetFileName(dir.TrimEnd('/')) + "/", dir, null); };
             users = new UserView(api, () => servers.ToList(), getSsh, sshOk, SetStatus, () => firewall) { Visible = false };
             economy = new EconomyView(api, team != null, Can("economy.edit"), getSsh, sshOk, SetStatus) { Visible = false };
+            modClient = new ModClient(api, team != null, getSsh) { Actor = user + " (Panel)" };
+            moderation = new ModerationView(modClient, SetStatus) { Visible = false };
+            users.Mod = modClient;
             teamView = new TeamView(getSsh, sshOk, SetStatus, () => team == null ? api.Token : null) { Visible = false, GetFirewall = () => firewall };
             teamView.PendingChanged = n => { nav[7].Badge = n > 0 ? n.ToString() : null; nav[7].Invalidate(); };
             main.Controls.Add(teamView);
@@ -306,6 +312,7 @@ namespace RyvenPanel
             main.Controls.Add(players);
             main.Controls.Add(users);
             main.Controls.Add(economy);
+            main.Controls.Add(moderation);
             main.Controls.Add(terminal);
             main.Controls.Add(files);
             main.Controls.Add(firewall);
@@ -400,6 +407,8 @@ namespace RyvenPanel
                 PI("Bereich", Icons.Globe, "Spieler & VPN", "Online-Spieler, Login-Verlauf, VPN-Erkennung", () => SetMode(2), "velocity ip"),
                 PI("Bereich", Icons.People, "Nutzer & Ränge", "Money, Coins, Ränge, Permissions, Bans", () => SetMode(3), "user luckperms rang rank perms geld"),
                 PI("Bereich", Icons.Chart, "Wirtschaft", "Geldmenge, Shop, Preise, Crates", () => SetMode(8), "economy geld money shop preise crates inflation"),
+                PI("Bereich", Icons.Block, "Moderation", "Reports, Strafen, Verify, Spieler bestrafen", () => SetMode(9), "report ban mute kick warn verwarnen strafe verify discord link"),
+                PI("Aktion", Icons.Block, "Spieler bestrafen", "Verwarnen, Kicken, Muten, Bannen – netzwerkweit", async () => { SetMode(9); await PunishDialog.Run(this, modClient, "", "warn", "", SetStatus); }, "ban mute kick warn"),
                 PI("Bereich", Icons.Terminal, "Terminal", "SSH-Konsole des Servers", () => SetMode(4), "ssh shell bash konsole"),
                 PI("Bereich", Icons.Folder, "Dateien", "Alle Server-Dateien (SFTP)", () => SetMode(5), "sftp upload download"),
                 PI("Bereich", Icons.Package, "Docker", "Container, Stacks, Images", () => SetMode(1), "container"),
@@ -413,6 +422,7 @@ namespace RyvenPanel
             tabs(2, new[] { "Live", "Verlauf", "VPN-Statistik" }, "Spieler & VPN", i => players.GoTab(i));
             tabs(3, new[] { "Spieler", "Ränge", "Protokoll" }, "Nutzer", i => users.GoTab(i));
             tabs(8, new[] { "Übersicht", "Spieler", "Shop", "Preise", "Crates" }, "Wirtschaft", i => economy.GoTab(i));
+            tabs(9, new[] { "Reports", "Strafen", "Verify" }, "Moderation", i => moderation.GoTab(i));
             tabs(1, new[] { "Container", "Stacks", "Images", "Netzwerke & Volumes", "Host" }, "Docker", i => docker.GoTab(i));
             tabs(6, new[] { "Ports", "Regeln", "Gesperrte IPs", "Verbindungen" }, "Firewall", i => firewall.GoTab(i));
 
@@ -455,7 +465,11 @@ namespace RyvenPanel
         {
             if (team == null) return;
             // sidebar: team members see the server area and – with economy.view – the economy tab
-            for (int i = 1; i < nav.Length; i++) if (nav[i] != null) nav[i].Visible = i == 8 && Can("economy.view");
+            for (int i = 1; i < nav.Length; i++) if (nav[i] != null) nav[i].Visible = (i == 8 && Can("economy.view")) || (i == 9 && Can("moderation.view"));
+            modClient.CanView = Can("moderation.view"); modClient.CanReports = Can("moderation.reports");
+            modClient.CanPunish = Can("moderation.punish"); modClient.CanBan = Can("moderation.ban");
+            moderation.ApplyPerms();
+            if (mode == 9 && !Can("moderation.view")) SetMode(0);
             economy.SetCanEdit(Can("economy.edit"));
             if (mode == 8 && !Can("economy.view")) SetMode(0);
             Need(tabConsole, "console.view");
@@ -508,6 +522,8 @@ namespace RyvenPanel
         {
             var all = new List<PaletteItem> { PI("Bereich", Icons.Server, "Server-Steuerung", "Server und Status", () => SetMode(0)) };
             if (Can("economy.view")) all.Add(PI("Bereich", Icons.Chart, "Wirtschaft", "Geldmenge, Shop, Preise, Crates", () => SetMode(8), "economy geld shop preise crates"));
+            if (Can("moderation.view")) all.Add(PI("Bereich", Icons.Block, "Moderation", "Reports, Strafen, Verify", () => SetMode(9), "report ban mute kick warn strafe verify"));
+            if (Can("moderation.punish") || Can("moderation.ban")) all.Add(PI("Aktion", Icons.Block, "Spieler bestrafen", "Verwarnen, Kicken, Muten, Bannen", async () => { SetMode(9); await PunishDialog.Run(this, modClient, "", "warn", "", SetStatus); }, "ban mute kick warn"));
             var tabs = new[] { new object[] { "Übersicht", 0, "servers.view" }, new object[] { "Konsole", 1, "console.view" }, new object[] { "Dateien", 2, "files.view" },
                                new object[] { "Metriken", 3, "servers.view" }, new object[] { "Verwaltung", 4, "console.command" } };
             foreach (var t in tabs)
@@ -548,6 +564,8 @@ namespace RyvenPanel
             firewall.Visible = m == 6;
             teamView.Visible = m == 7;
             economy.Visible = m == 8;
+            moderation.Visible = m == 9;
+            if (m != 9) moderation.Deactivate();
             if (m != 7) teamView.Deactivate();
             if (m != 1) docker.Deactivate();
             if (m != 2) players.Deactivate();
@@ -561,6 +579,7 @@ namespace RyvenPanel
             if (m == 6) firewall.Activate();
             if (m == 7) teamView.Activate();
             if (m == 8) economy.Activate();
+            if (m == 9) moderation.Activate();
         }
 
         int CurrentPage()
@@ -1705,13 +1724,11 @@ namespace RyvenPanel
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 52, BackColor = Theme.Bg, WrapContents = false };
             var bBroadcast = new FlatBtn("📢  Nachricht an alle Server", Theme.Accent) { Height = 38, Margin = new Padding(0, 0, 10, 0) };
             bBroadcast.Text = "Nachricht an alle Server";
-            var bSaveAll = new FlatBtn("Welt speichern (save-all)", Theme.CardHi) { Height = 38, Margin = new Padding(0, 0, 10, 0) };
             var bWlOn = new FlatBtn("Whitelist an", Theme.CardHi) { Height = 38, Margin = new Padding(0, 0, 10, 0) };
             var bWlOff = new FlatBtn("Whitelist aus", Theme.CardHi) { Height = 38, Margin = new Padding(0, 0, 10, 0) };
             var bRef = new FlatBtn("↻", Theme.CardHi) { Height = 38, Width = 42 };
-            bar.Controls.AddRange(new Control[] { bBroadcast, bSaveAll, bWlOn, bWlOff, bRef });
+            bar.Controls.AddRange(new Control[] { bBroadcast, bWlOn, bWlOff, bRef });
             bBroadcast.Click += async (s, e) => await Broadcast();
-            bSaveAll.Click += async (s, e) => await SendCommand("save-all");
             bWlOn.Click += async (s, e) => { if (Dialogs.Confirm(this, "Whitelist", "Whitelist auf „" + cur.Name + "“ einschalten? Nur eingetragene Spieler kommen dann rein.")) await SendCommand("whitelist on"); };
             bWlOff.Click += async (s, e) => await SendCommand("whitelist off");
             bRef.Click += async (s, e) => await LoadAdmin();

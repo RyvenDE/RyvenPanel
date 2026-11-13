@@ -285,8 +285,7 @@ namespace RyvenPanel
         /// <summary>Keeps a SplitContainer at a ratio until the user drags the splitter.</summary>
         public static void Ratio(SplitContainer s, double frac, int min1, int min2)
         {
-            min1 = Theme.Px(min1); min2 = Theme.Px(min2);
-            min1 = Theme.Px(min1); min2 = Theme.Px(min2);
+            min1 = Theme.Px(min1); min2 = Theme.Px(min2);   // once – scaling twice squeezed split views on 125/150 % displays
             bool user = false, setting = false;
             Action apply = () =>
             {
@@ -324,21 +323,31 @@ namespace RyvenPanel
             apply(root);
         }
 
-        /// <summary>Columns keep their proportions and always fill the list exactly (no horizontal scrollbar).</summary>
+        /// <summary>
+        /// Columns keep their proportions and fill the list. They never shrink below what their header needs
+        /// (at least 70 % of the designed width) – a narrow window gets a horizontal scrollbar instead of "C…" columns.
+        /// </summary>
         public static void FitColumns(ListView lv)
         {
-            int[] baseW = null;
+            int[] baseW = null, minW = null;
             bool busy = false;
             lv.Resize += (s, e) =>
             {
                 if (busy || lv.Columns.Count == 0 || lv.ClientSize.Width < 50) return;
-                if (baseW == null) baseW = lv.Columns.Cast<ColumnHeader>().Select(c => c.Width).ToArray();
+                if (baseW == null)
+                {
+                    baseW = lv.Columns.Cast<ColumnHeader>().Select(c => c.Width).ToArray();
+                    var hf = Theme.F(8f, FontStyle.Bold);
+                    // the first column (usually the name) keeps its full width, the others may shrink to 70 %
+                    minW = lv.Columns.Cast<ColumnHeader>().Select((c, i) => i == 0 ? baseW[0] :
+                        Math.Min(baseW[i], Math.Max((int)(baseW[i] * 0.7), TextRenderer.MeasureText(c.Text.ToUpperInvariant(), hf).Width + Theme.Px(22)))).ToArray();
+                }
                 busy = true;
                 int total = baseW.Sum(), avail = lv.ClientSize.Width - 2, used = 0;
                 bool changed = false;
                 for (int i = 0; i < baseW.Length; i++)
                 {
-                    int w = i == baseW.Length - 1 ? Math.Max(30, avail - used) : Math.Max(30, baseW[i] * avail / total);
+                    int w = i == baseW.Length - 1 ? Math.Max(minW[i], avail - used) : Math.Max(minW[i], baseW[i] * avail / total);
                     if (lv.Columns[i].Width != w) { lv.Columns[i].Width = w; changed = true; }
                     used += w;
                 }

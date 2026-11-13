@@ -16,7 +16,7 @@ import urllib.error, urllib.request
 
 CONF = "/etc/ryvenpanel/gateway.json"
 DB = "/var/lib/ryvenpanel/gateway.db"
-VERSION = "2.3"
+VERSION = "2.4"
 SCHEMA = 2
 
 PERMS = [
@@ -31,8 +31,16 @@ PERMS = [
     ("files.edit", "Server-Dateien bearbeiten / hochladen / löschen"),
     ("economy.view", "Wirtschaft ansehen (Geldfluss, Shop, Crates)"),
     ("economy.edit", "Shop-Preise ändern / Items hinzufügen"),
+    ("moderation.view", "Moderation ansehen (Reports, Strafen, Verify)"),
+    ("moderation.reports", "Reports bearbeiten (übernehmen / erledigen / ablehnen)"),
+    ("moderation.punish", "Verwarnen, Kicken, Muten / Entmuten"),
+    ("moderation.ban", "Bannen / Entbannen"),
 ]
 ECO_PY = "/opt/ryvenpanel/eco.py"
+MOD_PY = "/opt/ryvenpanel/mod.py"
+MOD_VIEW = ("overview", "reports", "report", "punishments", "links", "player", "templates")
+MOD_ACT = {"warn": "moderation.punish", "kick": "moderation.punish", "mute": "moderation.punish", "unmute": "moderation.punish",
+           "ban": "moderation.ban", "ipban": "moderation.ban", "unban": "moderation.ban"}
 DIST = "/opt/ryvenpanel/dist"  # panel releases (RyvenPanel.exe + version.json), published by the owner's panel
 ECO_CMDS = {"summary": "economy.view", "items": "economy.view", "setprice": "economy.edit", "additem": "economy.edit", "reload": "economy.edit", "settax": "economy.edit"}
 PERM_KEYS = [p[0] for p in PERMS]
@@ -508,6 +516,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.err(403, "PASSWORD_CHANGE", "Bitte zuerst ein eigenes Passwort festlegen.")
             if path == "/panel/eco" and method == "POST":
                 return self.eco(s, perms)
+            if path == "/panel/mod" and method == "POST":
+                return self.mod(s, perms)
             if path.startswith("/api/v2/"):
                 return self.proxy(method, s, perms)
             return self.err(404, "NOT_FOUND", "Unbekannter Pfad")
@@ -635,6 +645,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
                   "ok" if res.get("status") == "ok" else "Fehler")
         if res.get("status") != "ok":
             return self.err(400, "ECO_ERROR", res.get("error") or "Fehler")
+        return self.send_json(200, res)
+
+    def mod(self, s, perms):
+        """Moderation tab: runs mod.py with the caller's rights; the team member is recorded as the actor."""
+        try:
+            req = json.loads(self.body(256 * 1024).decode() or "{}")
+        except ValueError:
+            return self.err(400, "BAD_REQUEST", "Ungültige Anfrage")
+        cmd = str(req.get("cmd", ""))
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        if cmd in MOD_VIEW:
+            need = "moderation.view"
+        elif cmd == "report_set":
+            need = "moderation.reports"
+        elif cmd == "act":
+            need = MOD_ACT.get(str(args.get("action", "")))
+        else:
+            need = None
+        if need is not None and need not in perms:
+            perms = refresh_session(s["token_hash"], s["username"], s["rank"], perms)[1]
+        if need is None or need not in perms:
+            audit(s["username"], self.ip, "Verweigert", "Moderation: " + cmd[:20] + " " + str(args.get("action", ""))[:12], "keine Berechtigung")
+            return self.err(403, "NO_PERMISSION", "Keine Berechtigung" + (" (" + need + ")" if need else "") + ".")
+        if not os.path.exists(MOD_PY):
+            return self.err(503, "NOT_INSTALLED", "Die Moderation ist noch nicht eingerichtet – der Owner muss das Panel einmal starten.")
+        args["actor"] = s["username"] + " (Panel)"
+        try:
+            r = subprocess.run(["python3", MOD_PY, cmd, base64.b64encode(json.dumps(args).encode()).decode()], capture_output=True, timeout=60)
+            res = json.loads(r.stdout.decode() or "{}")
+        except (subprocess.TimeoutExpired, ValueError) as e:
+            return self.err(500, "MOD_ERROR", "Moderation fehlgeschlagen: " + str(e)[:200])
+        if cmd in ("act", "report_set"):
+            detail = (str(args.get("action", "")) + " " + str(args.get("player", "")) + " " + str(args.get("duration", "")) + " " + str(args.get("reason", ""))) \
+                if cmd == "act" else "Report #%s → %s" % (args.get("id"), args.get("status"))
+            audit(s["username"], self.ip, "Moderation", detail.strip()[:300], "ok" if res.get("status") == "ok" else "Fehler")
+        if res.get("status") != "ok":
+            return self.err(400, "MOD_ERROR", res.get("error") or "Fehler")
         return self.send_json(200, res)
 
     def proxy(self, method, s, perms):

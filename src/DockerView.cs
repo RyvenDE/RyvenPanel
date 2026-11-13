@@ -36,6 +36,9 @@ namespace RyvenPanel
         int page;
         RichTextBox output;
         Label outTitle;
+        Panel outPanel;
+        FlatBtn outToggle;
+        bool outOpen;   // starts collapsed, opens with the first output
         readonly Timer timer = new Timer { Interval = 4000 };
         bool busy, active, connected;
 
@@ -287,7 +290,7 @@ namespace RyvenPanel
             pages = new[] { BuildContainers(), BuildStacks(), BuildImages(), BuildNetVol(), BuildHost() };
             foreach (var p in pages) content.Controls.Add(p);
 
-            var outPanel = new Panel { Dock = DockStyle.Bottom, Height = 220, BackColor = Theme.Bg, Padding = new Padding(0, 12, 0, 0) };
+            outPanel = new Panel { Dock = DockStyle.Bottom, Height = 220, BackColor = Theme.Bg, Padding = new Padding(0, 12, 0, 0) };
             var outBox = new RoundPanel { Dock = DockStyle.Fill, Fill = Theme.Input, BorderColor = Theme.Border, Padding = new Padding(14, 36, 6, 10) };
             outTitle = Theme.Lbl("AUSGABE", Theme.F(8.25f, FontStyle.Bold), Theme.Muted, Theme.Input);
             outTitle.Location = new Point(14, 12);
@@ -304,6 +307,11 @@ namespace RyvenPanel
             };
             outBox.Controls.Add(output);
             outBox.Controls.Add(outTitle);
+            outToggle = new FlatBtn("Ausgabe einklappen", Theme.CardHi) { Height = 26, Font = Theme.F(8f, FontStyle.Bold), Anchor = AnchorStyles.Top | AnchorStyles.Right }.Tip("Ausgabe-Bereich ein-/ausklappen – öffnet sich automatisch bei neuer Ausgabe");
+            outBox.Controls.Add(outToggle);
+            outBox.Resize += (s, e) => outToggle.Location = new Point(outBox.Width - outToggle.Width - Theme.Px(12), Theme.Px(6));
+            outToggle.Click += (s, e) => SetOut(!outOpen);
+            body.Resize += (s, e) => SetOut(outOpen);
             outPanel.Controls.Add(outBox);
 
             body.Controls.Add(content);
@@ -349,9 +357,21 @@ namespace RyvenPanel
             finally { busy = false; }
         }
 
+        /// <summary>Output area: collapsed = only its title bar; open = about a third of the page (scales with the window).</summary>
+        void SetOut(bool open)
+        {
+            outOpen = open;
+            int h = open ? Math.Max(Theme.Px(150), Math.Min(Theme.Px(320), (int)(body.Height * 0.32))) : Theme.Px(56);
+            if (outPanel.Height != h) outPanel.Height = h;
+            output.Visible = open;
+            outToggle.Text = open ? "Ausgabe einklappen" : "Ausgabe anzeigen";
+            outToggle.Width = Theme.Px(Theme.Measure(outToggle.Text, outToggle.Font).Width + 24);
+        }
+
         void SetOutput(string title, string text, bool error)
         {
             outTitle.Text = title.ToUpperInvariant();
+            if (!outOpen) SetOut(true);
             output.Clear();
             output.SelectionColor = error ? Theme.Red : Theme.Text2;
             output.AppendText((text ?? "").Replace("\r\n", "\n").TrimEnd() + "\n");
@@ -464,10 +484,10 @@ namespace RyvenPanel
 
         static Panel Toolbar(params Control[] items)
         {
-            var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, BackColor = Theme.Bg, WrapContents = false, AutoScroll = false };
+            var bar = new WrapBar { Dock = DockStyle.Top, BackColor = Theme.Bg, Padding = new Padding(0, 0, 0, 10) };   // wraps instead of cutting buttons off
             foreach (var c in items)
             {
-                c.Margin = new Padding(0, 0, 8, 0);
+                c.Margin = new Padding(0, 0, 8, 8);
                 bar.Controls.Add(c);
             }
             return bar;
@@ -582,6 +602,7 @@ namespace RyvenPanel
             var r = await ssh.Run("docker logs --tail 300 " + Ssh.Q(n) + " 2>&1", 30000);
             var text = Util.StripAnsi(r.Ok ? r.Out : r.Message);
             outTitle.Text = ("Logs: " + n + (liveLogs.Checked ? "  (live)" : "")).ToUpperInvariant();
+            if (!outOpen) SetOut(true);
             output.Text = text.Replace("\r\n", "\n");
             output.SelectionStart = output.TextLength;
             output.ScrollToCaret();

@@ -196,6 +196,7 @@ namespace RyvenPanel
 
         TabBtn[] dTabs;
         Panel[] dPages;
+        Action layoutTop;
 
         void SetDetailTab(int i) { for (int k = 0; k < dPages.Length; k++) { dPages[k].Visible = k == i; dTabs[k].Active = k == i; } }
 
@@ -236,10 +237,24 @@ namespace RyvenPanel
             var bIp = new FlatBtn("IP kopieren", Theme.CardHi);
             var bIntel = new FlatBtn("IP prüfen", Theme.CardHi).Tip("Ort, Provider und VPN-Verdacht nachschlagen");
             var bNameMc = new FlatBtn("NameMC", Theme.CardHi).Tip("Profil auf namemc.com öffnen (nur Java)");
-            var quick = new FlowLayoutPanel { Location = new Point(0, 114), Size = new Size(600, 36), BackColor = Theme.Card, WrapContents = false };
-            foreach (var b in new[] { bUuid, bIp, bIntel, bNameMc }) { b.Height = 30; b.Font = Theme.F(8.5f, FontStyle.Bold); b.Margin = new Padding(0, 0, 6, 0); quick.Controls.Add(b); }
-            top.Resize += (s, e) => quick.Width = top.Width;
+            var quick = new FlowLayoutPanel { Location = new Point(0, 114), Size = new Size(600, 36), BackColor = Theme.Card, WrapContents = true };
+            foreach (var b in new[] { bUuid, bIp, bIntel, bNameMc }) { b.Height = 30; b.Font = Theme.F(8.5f, FontStyle.Bold); b.Margin = new Padding(0, 0, 6, 6); quick.Controls.Add(b); }
             top.Controls.AddRange(new Control[] { dName, dRank, dOnline, dInfo, dAlts, quick });
+            // the header grows with its content: long IP/provider lines wrap, buttons wrap on narrow windows
+            layoutTop = () =>
+            {
+                int w = Math.Max(Theme.Px(200), top.Width - Theme.Px(4));
+                int y = dName.Bottom + Theme.Px(6);
+                var ih = TextRenderer.MeasureText(dInfo.Text.Length > 0 ? dInfo.Text : "X", dInfo.Font, new Size(w, 0), TextFormatFlags.WordBreak).Height;
+                dInfo.SetBounds(Theme.Px(2), y, w, ih + Theme.Px(2));
+                y = dInfo.Bottom + Theme.Px(2);
+                dAlts.SetBounds(Theme.Px(2), y, w, Theme.Px(18));
+                y = dAlts.Bottom + Theme.Px(6);
+                quick.SetBounds(0, y, top.Width, Math.Max(Theme.Px(36), quick.GetPreferredSize(new Size(top.Width, 0)).Height));
+                int h = quick.Bottom + Theme.Px(4);
+                if (top.Height != h) top.Height = h;
+            };
+            top.Resize += (s, e) => layoutTop();
             bUuid.Click += (s, e) => { if (sel != null) { Clipboard.SetText(sel.Uuid); setStatus("UUID kopiert: " + sel.Uuid, Theme.Green); } };
             bIp.Click += (s, e) => { if (sel != null && !string.IsNullOrEmpty(sel.Ip)) { Clipboard.SetText(sel.Ip); setStatus("IP kopiert.", Theme.Green); } };
             bNameMc.Click += (s, e) => { if (sel != null && !sel.Bedrock) System.Diagnostics.Process.Start("https://namemc.com/profile/" + sel.Uuid); };
@@ -265,6 +280,19 @@ namespace RyvenPanel
                 dTabs[i].Click += (s, e) => SetDetailTab(idx);
                 strip.Controls.Add(dTabs[i]);
             }
+            // tabs wrap into a second row instead of running out of the card
+            strip.Resize += (s, e) =>
+            {
+                int tx = 0, ty = Theme.Px(2), rowH = dTabs[0].Height + Theme.Px(2);
+                foreach (var t in dTabs)
+                {
+                    if (tx > 0 && tx + t.Width > strip.Width) { tx = 0; ty += rowH; }
+                    t.Location = new Point(tx, ty);
+                    tx = t.Right + Theme.Px(2);
+                }
+                int h = ty + rowH + Theme.Px(2);
+                if (strip.Height != h) strip.Height = h;
+            };
             strip.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = Theme.Border });
 
             // ── page: economy ──
@@ -335,33 +363,36 @@ namespace RyvenPanel
             };
 
             // ── page: moderation ──
-            var pMod = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Card, Padding = new Padding(0, 10, 0, 0) };
+            var pMod = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Card, Padding = new Padding(0, 10, 0, 0), AutoScroll = true };
             Func<string, Color, string, FlatBtn> mb = (t, c, tip) => new FlatBtn(t, c) { Height = 34, Margin = new Padding(0, 0, 8, 8) }.Tip(tip);
             var g1 = new WrapBar { Dock = DockStyle.Top, BackColor = Theme.Card };
             var g2 = new WrapBar { Dock = DockStyle.Top, BackColor = Theme.Card };
             var g3 = new WrapBar { Dock = DockStyle.Top, BackColor = Theme.Card };
-            var bKick = mb("Kick", Theme.CardHi, "Vom Server werfen (mit Grund)");
-            var bMute = mb("Mute", Theme.CardHi, "Chat sperren für eine Dauer");
-            var bUnmute = mb("Unmute", Theme.CardHi, "Chat-Sperre aufheben");
-            var bTemp = mb("Tempban", Theme.Mix(Theme.Red, Theme.Card, 0.3), "Bann für eine Dauer, z. B. 7d");
-            var bBan = mb("Ban", Theme.Mix(Theme.Red, Theme.Card, 0.45), "Dauerhafter Bann");
-            var bIpBan = mb("IP-Ban", Theme.Mix(Theme.Red, Theme.Card, 0.45), "Bannt die IP – alle Accounts dieser IP");
+            var bWarn = mb("Verwarnen", Theme.CardHi, "Verwarnung mit Grund – wird protokolliert");
+            var bKick = mb("Kicken", Theme.CardHi, "Vom Netzwerk werfen (mit Grund)");
+            var bMute = mb("Muten", Theme.CardHi, "Chat sperren – Dauer frei oder per Vorlage");
+            var bUnmute = mb("Entmuten", Theme.CardHi, "Chat-Sperre aufheben");
+            var bBan = mb("Bannen", Theme.Mix(Theme.Red, Theme.Card, 0.45), "Bann – Dauer frei, per Vorlage oder permanent; auch IP-Bann");
             var bUnban = mb("Entbannen", Theme.CardHi, "Bann aufheben");
+            var bFile = mb("Akte", Theme.CardHi, "Alle Strafen, Reports und Discord-Verknüpfung des Spielers");
             var bFw = mb("IP in Firewall sperren", Theme.DarkRed, "Blockiert die IP komplett auf Server-Ebene");
-            g1.Controls.AddRange(new Control[] { bKick, bMute, bUnmute });
-            g2.Controls.AddRange(new Control[] { bTemp, bBan, bIpBan, bUnban });
+            g1.Controls.AddRange(new Control[] { bWarn, bKick, bMute, bUnmute, bFile });
+            g2.Controls.AddRange(new Control[] { bBan, bUnban });
             g3.Controls.AddRange(new Control[] { bFw });
             Func<string, Label> cap = t => { var l = Theme.Lbl(t, Theme.F(8f, FontStyle.Bold), Theme.Muted, Theme.Card); l.Dock = DockStyle.Top; l.AutoSize = false; l.Height = 22; return l; };
+            var modHint = Theme.Lbl("Strafen gelten netzwerkweit (RyvenBans) und erscheinen im Discord-Strafen-Log und unter Moderation.", Theme.F(8.75f), Theme.Muted, Theme.Card);
+            modHint.Dock = DockStyle.Top; modHint.AutoSize = false; modHint.Height = 40;
             pMod.Controls.Add(g3); pMod.Controls.Add(cap("FIREWALL (Server-Ebene)"));
             pMod.Controls.Add(g2); pMod.Controls.Add(cap("BANNS"));
-            pMod.Controls.Add(g1); pMod.Controls.Add(cap("CHAT & KICK"));
-            bKick.Click += async (s, e) => await Moderate("kick", false, true);
-            bMute.Click += async (s, e) => await Moderate("mute", true, true);
-            bTemp.Click += async (s, e) => await Moderate("tempban", true, true);
-            bBan.Click += async (s, e) => await Moderate("ban", false, true);
-            bIpBan.Click += async (s, e) => await Moderate("ban-ip", false, true);
-            bUnban.Click += async (s, e) => await Moderate("pardon", false, false);
-            bUnmute.Click += async (s, e) => await Moderate("unmute", false, false);
+            pMod.Controls.Add(g1); pMod.Controls.Add(cap("VERWARNEN, KICKEN, CHAT"));
+            pMod.Controls.Add(modHint);
+            bWarn.Click += async (s, e) => await Moderate("warn");
+            bKick.Click += async (s, e) => await Moderate("kick");
+            bMute.Click += async (s, e) => await Moderate("mute");
+            bBan.Click += async (s, e) => await Moderate("ban");
+            bUnban.Click += async (s, e) => { if (sel != null && Mod != null && await PunishDialog.Revoke(FindForm(), Mod, sel.Name, "ban", setStatus)) await LoadDetail(); };
+            bUnmute.Click += async (s, e) => { if (sel != null && Mod != null && await PunishDialog.Revoke(FindForm(), Mod, sel.Name, "mute", setStatus)) await LoadDetail(); };
+            bFile.Click += (s, e) => { if (sel != null && Mod != null) using (var f = new PlayerFileForm(Mod, sel.Name, setStatus)) f.ShowDialog(FindForm()); };
             bFw.Click += async (s, e) =>
             {
                 if (sel == null || string.IsNullOrEmpty(sel.Ip)) { setStatus("Keine IP bekannt.", Theme.Yellow); return; }
@@ -770,12 +801,13 @@ namespace RyvenPanel
             dRank.Left = dName.Right + 10; dOnline.Left = dRank.Right + 8;
             var info = IpIntel.Get(p.Ip ?? "");
             var sb = new StringBuilder();
-            sb.AppendLine("UUID      " + p.Uuid + (p.Bedrock ? "   (Bedrock / Floodgate)" : "   (Java)"));
-            sb.AppendLine("IP        " + (p.Ip ?? "unbekannt") + (info != null ? "   ·   " + (info.City != null ? info.City + ", " : "") + (info.CountryCode ?? "") + "   ·   " + (info.Org ?? info.Isp ?? "") + (info.Suspicious ? "   ⚠ " + info.Flags : "") : ""));
-            sb.AppendLine("Login     " + (p.Login.HasValue ? p.Login.Value.ToString("dd.MM.yyyy HH:mm") + " (" + Ui.Ago(p.Login.Value) + ")" : "–") +
-                          "      Logout  " + (p.Logout.HasValue ? p.Logout.Value.ToString("dd.MM.yyyy HH:mm") : "–"));
-            dInfo.Font = Theme.Mono;
+            sb.AppendLine("UUID  " + p.Uuid + (p.Bedrock ? "  ·  Bedrock / Floodgate" : "  ·  Java"));
+            sb.AppendLine("IP  " + (p.Ip ?? "unbekannt") + (info != null ? "  ·  " + (info.City != null ? info.City + ", " : "") + (info.CountryCode ?? "") + "  ·  " + (info.Org ?? info.Isp ?? "") + (info.Suspicious ? "  ·  ⚠ " + info.Flags : "") : ""));
+            sb.Append("Login  " + (p.Login.HasValue ? p.Login.Value.ToString("dd.MM.yyyy HH:mm") + " (" + Ui.Ago(p.Login.Value) + ")" : "–") +
+                      "  ·  Logout  " + (p.Logout.HasValue ? p.Logout.Value.ToString("dd.MM.yyyy HH:mm") : "–"));
+            dInfo.Font = Theme.F(9f);
             dInfo.Text = sb.ToString();
+            if (layoutTop != null) layoutTop();
             var alts = string.IsNullOrEmpty(p.Ip) ? new List<McPlayer>() : players.Where(o => o != p && o.Ip == p.Ip).ToList();
             dAlts.Text = alts.Count > 0 ? "⚠ Gleiche IP wie: " + string.Join(", ", alts.Select(a => a.Name)) : "Keine anderen Accounts mit dieser IP.";
             dAlts.ForeColor = alts.Count > 0 ? Theme.Yellow : Theme.Muted;
@@ -1167,31 +1199,16 @@ namespace RyvenPanel
             await Direct("Permission " + perm + " für " + p.Name, Heredoc("lpq", sql));
         }
 
-        async Task Moderate(string kind, bool needDuration, bool needReason)
+        /// <summary>Set by the main window – network-wide punishments through RyvenBans (mod.py).</summary>
+        public ModClient Mod;
+
+        async Task Moderate(string kind)
         {
             var p = sel;
             if (p == null) return;
+            if (Mod == null) { setStatus("Moderation nicht verfügbar.", Theme.Red); return; }
             if (!NameRx.IsMatch(p.Name)) { setStatus("Ungültiger Spielername.", Theme.Red); return; }
-            var titles = new Dictionary<string, string> { { "kick", "Kicken" }, { "mute", "Muten" }, { "tempban", "Temporär bannen" }, { "ban", "Bannen" }, { "ban-ip", "IP bannen" }, { "pardon", "Entbannen" }, { "unmute", "Entmuten" } };
-            string dur = null, reason = "";
-            if (needDuration || needReason)
-            {
-                var d = new FormDialog(titles[kind] + " – " + p.Name, kind == "ban-ip" ? "Bannt die IP " + (p.Ip ?? "(unbekannt)") + " – alle Accounts mit dieser IP." : null);
-                Field df = null;
-                if (needDuration) df = d.AddText("Dauer (z. B. 1h, 7d, 30d)", kind == "mute" ? "1h" : "7d");
-                var rf = d.AddText("Grund", kind == "kick" ? "Bitte halte dich an die Regeln." : "");
-                using (d)
-                {
-                    if (!d.Run(FindForm(), titles[kind])) return;
-                    if (df != null) dur = df.Box.Text.Trim().ToLowerInvariant();
-                    reason = Clean(rf.Box.Text);
-                }
-                if (dur != null && !DurRx.IsMatch(dur)) { setStatus("Ungültige Dauer.", Theme.Red); return; }
-            }
-            else if (!Dialogs.Confirm(FindForm(), titles[kind], titles[kind] + ": " + p.Name + "?")) return;
-            string target = kind == "ban-ip" && !string.IsNullOrEmpty(p.Ip) ? p.Ip : p.Name;
-            var cmd = kind + " " + target + (dur != null ? " " + dur : "") + (reason.Length > 0 ? " " + reason : "");
-            await Command(new[] { cmd }, false, LoadDetail);
+            if (await PunishDialog.Run(FindForm(), Mod, p.Name, kind, kind == "kick" ? "Bitte halte dich an die Regeln." : "", setStatus)) await LoadDetail();
         }
     }
 }

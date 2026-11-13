@@ -50,7 +50,8 @@ if (Test-Path $out) {
     "/win32icon:$ico" "/win32manifest:$manifest" `
     /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `
     /r:System.Web.Extensions.dll /r:System.Security.dll `
-    "/resource:$(Join-Path $root 'gateway\gateway.py'),gateway.py" "/resource:$(Join-Path $root 'gateway\eco.py'),eco.py" "$sources"
+    "/resource:$(Join-Path $root 'gateway\gateway.py'),gateway.py" "/resource:$(Join-Path $root 'gateway\eco.py'),eco.py" `
+    "/resource:$(Join-Path $root 'gateway\mod.py'),mod.py" "$sources"
 if ($LASTEXITCODE -ne 0) { throw "Build fehlgeschlagen" }
 Write-Host "OK -> $out"
 
