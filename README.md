@@ -4,7 +4,20 @@
 Ein Programm für alles, was man als Server-Owner täglich braucht – Server steuern, Spieler & Ränge verwalten,
 Wirtschaft auswerten, Dateien, Terminal, Docker und Firewall – plus ein sicherer Zugang für dein Team.
 
-> Entwickelt für das RyvenMC-Netzwerk, frei nutzbar für jeden (MIT-Lizenz).
+> [!WARNING]
+> **Dieses Panel ist speziell für das RyvenMC-Netzwerk angepasst – es ist kein Plug-and-Play-Panel für beliebige Server.**
+>
+> - **Ein KVM-Server ist Pflicht.** Du brauchst einen eigenen Linux-Server (KVM-VPS oder Root-Server) mit Root- und SSH-Zugriff.
+>   Auf Minecraft-Hostern, Shared Hosting oder Webspace ohne Root/SSH funktioniert RyvenPanel **nicht**.
+> - **Docker wird vorausgesetzt.** Crafty Controller und die Datenbank (MariaDB/MySQL) müssen als Docker-Container laufen.
+> - **Eigene Plugins sind nötig, um an die Daten zu kommen.** Mehrere Bereiche lesen ihre Daten über eigene Plugins bzw. deren
+>   Datenbank-Tabellen (z. B. *RyvenEco* für die Wirtschaft, LuckPerms mit MySQL für Ränge und Team-Rechte). Ohne diese Plugins
+>   – oder eigene Plugins mit derselben Schnittstelle – bleiben diese Bereiche leer oder funktionieren nur eingeschränkt.
+> - Pfade und Abläufe (z. B. `/opt/crafty/docker/servers`) sind auf den Aufbau von RyvenMC abgestimmt und müssen ggf. angepasst werden.
+>
+> Nutzung auf eigene Verantwortung, ohne Anspruch auf Support.
+
+Entwickelt für das RyvenMC-Netzwerk, frei nutzbar für jeden (MIT-Lizenz).
 
 ## Download
 
@@ -38,8 +51,12 @@ bindet Accounts an IP-Adressen und protokolliert alles.
 **PC:** Windows 10/11 (.NET Framework 4.8 ist bereits enthalten). Für Terminal, Dateien, Docker, Firewall und
 Wirtschaft den Windows-Client „OpenSSH“ (*Einstellungen → Optionale Features*).
 
-**Server:** Linux mit Crafty Controller 4 (Docker), Python 3 für den Team-Zugang, LuckPerms mit MySQL/MariaDB.
-Die Wirtschafts-Auswertung nutzt zusätzlich das Plugin RyvenEco.
+**Server (Pflicht):**
+- **KVM-Server** (VPS oder Root-Server) mit Linux, Root- und SSH-Zugriff
+- **Docker** mit Crafty Controller 4 und MariaDB/MySQL als Container
+- Python 3 für den Team-Zugang
+- LuckPerms mit MySQL/MariaDB-Speicher
+- Eigene Plugins für den Datenzugriff, z. B. **RyvenEco** für die Wirtschafts-Auswertung
 
 ## Erste Schritte
 
