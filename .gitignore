@@ -1,0 +1,9 @@
+# Build-Ergebnisse (Installer gibt es unter Releases)
+*.exe
+*.old
+*.new
+dist/
+obj/
+bin/
+__pycache__/
+
