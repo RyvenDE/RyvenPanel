@@ -19,6 +19,8 @@ Wirtschaft auswerten, Dateien, Terminal, Docker und Firewall – plus ein sicher
 
 Entwickelt für das RyvenMC-Netzwerk, frei nutzbar für jeden (MIT-Lizenz).
 
+![RyvenPanel – Wirtschafts-Übersicht](docs/screenshots/wirtschaft.png)
+
 ## Download
 
 👉 **[Neueste Version herunterladen](../../releases/latest)** – `RyvenPanel-Setup-x.y.z.exe` starten, fertig.
@@ -40,6 +42,18 @@ Entwickelt für das RyvenMC-Netzwerk, frei nutzbar für jeden (MIT-Lizenz).
 | **Docker** | Container, Stacks, Images, Netzwerke |
 | **Firewall** | Ports öffnen/schließen, IPs sperren (iptables) |
 | **Team & Zugänge** | Team-Accounts mit Passwort, Rechte pro LuckPerms-Rang, IP-Freigaben, Protokoll |
+
+## Screenshots
+
+<sub>Alle Daten in den Bildern sind Beispieldaten.</sub>
+
+| | |
+|---|---|
+| ![Wirtschaft – Spieler](docs/screenshots/wirtschaft-spieler.png)<br>**Wirtschaft – Spieler:** Einnahmen und Ausgaben jedes Spielers nach Quelle | ![Shop-Preise](docs/screenshots/preise.png)<br>**Shop-Preise:** Preise direkt ändern, Warnung bei Verkauf > Kauf |
+| ![Crates](docs/screenshots/crates.png)<br>**Crates:** Öffnungen, ausgeschüttetes Geld, häufigste Gewinne | ![Team-Rechte](docs/screenshots/team-rechte.png)<br>**Team-Rechte:** Panel-Rechte pro LuckPerms-Rang |
+| ![Team-Accounts](docs/screenshots/team-accounts.png)<br>**Team-Accounts:** Logins, feste IPs, Status | ![Login](docs/screenshots/login.png)<br>**Login:** Team-Login oder Owner über Crafty |
+
+<p align="center"><img src="docs/screenshots/installer.png" alt="Installer" width="420"><br><b>Installer:</b> ohne Adminrechte, mit automatischen Updates</p>
 
 ### Team-Zugang
 Teammitglieder bekommen **nie** deinen SSH-Schlüssel oder Crafty-Zugang. Ein kleiner Dienst auf dem Server

@@ -3,9 +3,10 @@
 # und legt ein Release mit dem Installer als Download an.
 #
 #   powershell -ExecutionPolicy Bypass -File publish-github.ps1 -Notes "Was ist neu"
+#   (nur Text/README geändert:  ... -Message "README: Hinweis ergänzt")
 #
 # Anmeldung: nutzt die in Git gespeicherte GitHub-Anmeldung (Git Credential Manager).
-param([string]$Notes = "")
+param([string]$Notes = "", [string]$Message = "")
 $ErrorActionPreference = 'Continue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -46,7 +47,7 @@ foreach ($k in 'user.name', 'user.email') {
     if (-not (git.exe -C $pub config $k)) { $v = git.exe -C $root config $k; if ($v) { RunGit -C $pub config $k $v } }
 }
 RunGit -C $pub config core.autocrlf false
-foreach ($d in 'src', 'setup', 'gateway') {
+foreach ($d in 'src', 'setup', 'gateway', 'docs') {
     robocopy (Join-Path $root $d) (Join-Path $pub $d) /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Kopieren fehlgeschlagen ($d)" }
 }
@@ -63,7 +64,7 @@ Push-Location $pub
 try {
     if (-not (Get-ChildItem '.git\refs\heads' -ErrorAction SilentlyContinue)) { RunGit symbolic-ref HEAD refs/heads/main }
     RunGit add -A
-    if (git status --porcelain) { RunGit commit -q -m "RyvenPanel $version" }
+    if (git status --porcelain) { RunGit commit -q -m $(if ($Message) { $Message } else { "RyvenPanel $version" }) }
     if (-not (git tag -l $tag)) { RunGit tag $tag }
     RunGit push -q origin HEAD:main
     RunGit push -q origin $tag

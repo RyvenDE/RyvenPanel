@@ -572,7 +572,7 @@ namespace RyvenPanel
             {
                 var arr = J.L(p).Select(Convert.ToString).ToArray();
                 if (arr.Length < 2) continue;
-                var cb = new CheckBox { Text = arr[1], AutoSize = true, ForeColor = Theme.Text, BackColor = Theme.Card, Font = Theme.F(10f), Margin = new Padding(0, 4, 0, 6), Enabled = false };
+                var cb = new CheckBox { Text = arr[1], UseMnemonic = false, AutoSize = true, ForeColor = Theme.Text, BackColor = Theme.Card, Font = Theme.F(10f), Margin = new Padding(0, 4, 0, 6), Enabled = false };
                 if (arr[0] == "console.command.unrestricted" || arr[0] == "files.edit") cb.ForeColor = Theme.Mix(Theme.Text, Theme.Red, 0.35);
                 cb.Tip(arr[0]);
                 permChecks[arr[0]] = cb;
