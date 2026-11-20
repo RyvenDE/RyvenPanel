@@ -79,7 +79,7 @@ namespace RyvenPanel
             using (var glow = Theme.RoundRect(new RectangleF(a.X - 1, a.Y + 2, a.Width + 2, a.Height), a.Height / 2))
             using (var b = new SolidBrush(Theme.Alpha(Theme.Accent, 60))) g.FillPath(b, glow);
             using (var p = Theme.RoundRect(a, a.Height / 2))
-            using (var b = new LinearGradientBrush(new RectangleF(a.X - 1, a.Y, a.Width + 2, a.Height), Theme.Mix(Theme.Accent, Theme.Cyan, 0.15), Theme.Mix(Theme.Accent, Theme.Pink, 0.45), 0f))
+            using (var b = new LinearGradientBrush(new RectangleF(a.X - 1, a.Y, a.Width + 2, a.Height), Theme.Mix(Theme.Accent, Theme.SoftGreen, 0.15), Theme.Mix(Theme.Accent, Theme.Mint, 0.45), 0f))
                 g.FillPath(b, p);
             for (int i = 0; i < items.Length; i++)
             {
@@ -267,13 +267,13 @@ namespace RyvenPanel
             using (var clip = Theme.RoundRect(r, Radius))
             {
                 g.SetClip(clip);
-                Blob(g, new RectangleF(r.X - Theme.Px(120), r.Y - Theme.Px(140), Theme.Px(420), Theme.Px(300)), Theme.Cyan, 34);
-                Blob(g, new RectangleF(r.Right - Theme.Px(320), r.Bottom - Theme.Px(150), Theme.Px(460), Theme.Px(300)), Theme.Pink, 26);
+                Blob(g, new RectangleF(r.X - Theme.Px(120), r.Y - Theme.Px(140), Theme.Px(420), Theme.Px(300)), Theme.SoftGreen, 34);
+                Blob(g, new RectangleF(r.Right - Theme.Px(320), r.Bottom - Theme.Px(150), Theme.Px(460), Theme.Px(300)), Theme.Mint, 26);
                 g.ResetClip();
             }
 
             int x = r.X + Theme.Px(26), y = r.Y + Theme.Px(24), bw = TextBlockW - Theme.Px(26);
-            using (var b = new SolidBrush(Theme.Cyan)) g.FillEllipse(b, x, y + Theme.Px(4), Theme.Px(7), Theme.Px(7));
+            using (var b = new SolidBrush(Theme.SoftGreen)) g.FillEllipse(b, x, y + Theme.Px(4), Theme.Px(7), Theme.Px(7));
             TextRenderer.DrawText(g, Title, Theme.F(8.25f, FontStyle.Bold), new Point(x + Theme.Px(12), y), Theme.Text2);
             y += Theme.Px(24);
             var vf = Theme.F(27f, FontStyle.Bold);
@@ -349,19 +349,19 @@ namespace RyvenPanel
                 area.AddLines(pts.ToArray());
                 area.AddLine(pts[pts.Count - 1], new PointF(pts[pts.Count - 1].X, pr.Bottom));
                 area.AddLine(new PointF(pts[0].X, pr.Bottom), pts[0]);
-                using (var b = new LinearGradientBrush(new RectangleF(pr.X, pr.Y - 1, pr.Width, pr.Height + 2), Theme.Alpha(Theme.Cyan, 80), Theme.Alpha(Theme.Accent, 0), 90f))
+                using (var b = new LinearGradientBrush(new RectangleF(pr.X, pr.Y - 1, pr.Width, pr.Height + 2), Theme.Alpha(Theme.SoftGreen, 80), Theme.Alpha(Theme.Accent, 0), 90f))
                     g.FillPath(b, area);
             }
-            using (var lb = new LinearGradientBrush(new RectangleF(pr.X - 1, pr.Y, pr.Width + 2, pr.Height), Theme.Cyan, Theme.Pink, 0f))
+            using (var lb = new LinearGradientBrush(new RectangleF(pr.X - 1, pr.Y, pr.Width + 2, pr.Height), Theme.SoftGreen, Theme.Mint, 0f))
             {
-                using (var pen = new Pen(Theme.Alpha(Theme.Cyan, 45), Theme.Px(7)) { LineJoin = LineJoin.Round }) g.DrawLines(pen, pts.ToArray());
+                using (var pen = new Pen(Theme.Alpha(Theme.SoftGreen, 45), Theme.Px(7)) { LineJoin = LineJoin.Round }) g.DrawLines(pen, pts.ToArray());
                 using (var pen = new Pen(lb, Theme.Px(2.4)) { LineJoin = LineJoin.Round }) g.DrawLines(pen, pts.ToArray());
             }
             g.ResetClip();
             if (reveal > 0.98)
             {
                 var lp = pts[pts.Count - 1];
-                using (var b = new SolidBrush(Theme.Alpha(Theme.Pink, 70))) g.FillEllipse(b, lp.X - Theme.Px(8), lp.Y - Theme.Px(8), Theme.Px(16), Theme.Px(16));
+                using (var b = new SolidBrush(Theme.Alpha(Theme.Mint, 70))) g.FillEllipse(b, lp.X - Theme.Px(8), lp.Y - Theme.Px(8), Theme.Px(16), Theme.Px(16));
                 using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, lp.X - Theme.Px(3.5), lp.Y - Theme.Px(3.5), Theme.Px(7), Theme.Px(7));
             }
             var lf = Theme.F(8f);
@@ -376,7 +376,7 @@ namespace RyvenPanel
             {
                 float hx = X(hoverIdx), hy = Y(series[hoverIdx].Value);
                 using (var pen = new Pen(Theme.Alpha(Color.White, 50)) { DashStyle = DashStyle.Dash }) g.DrawLine(pen, hx, pr.Top, hx, pr.Bottom);
-                using (var b = new SolidBrush(Theme.Alpha(Theme.Cyan, 80))) g.FillEllipse(b, hx - Theme.Px(8), hy - Theme.Px(8), Theme.Px(16), Theme.Px(16));
+                using (var b = new SolidBrush(Theme.Alpha(Theme.SoftGreen, 80))) g.FillEllipse(b, hx - Theme.Px(8), hy - Theme.Px(8), Theme.Px(16), Theme.Px(16));
                 using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, hx - Theme.Px(4), hy - Theme.Px(4), Theme.Px(8), Theme.Px(8));
                 var tip = Format(series[hoverIdx].Value) + (hoverIdx < labels.Length ? "   " + labels[hoverIdx] : "");
                 var tf = Theme.F(9f, FontStyle.Bold);
@@ -386,7 +386,7 @@ namespace RyvenPanel
                 using (var p = Theme.RoundRect(tr, Theme.Px(8)))
                 {
                     using (var b = new SolidBrush(Theme.Alpha(Theme.Bg, 240))) g.FillPath(b, p);
-                    using (var pen = new Pen(Theme.Alpha(Theme.Cyan, 120))) g.DrawPath(pen, p);
+                    using (var pen = new Pen(Theme.Alpha(Theme.SoftGreen, 120))) g.DrawPath(pen, p);
                 }
                 TextRenderer.DrawText(g, tip, tf, new Point(tr.X + Theme.Px(8), tr.Y + Theme.Px(5)), Theme.Text);
             }

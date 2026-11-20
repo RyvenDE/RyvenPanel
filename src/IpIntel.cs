@@ -19,6 +19,8 @@ namespace RyvenPanel
         public DateTime Start;
         public DateTime? End;
         public bool EndedByRestart;
+        /// <summary>Entered by hand in /var/lib/ryvenpanel/manual-ips.txt instead of read from a proxy log.</summary>
+        public bool Manual;
         public readonly List<string> Servers = new List<string>();
         public TimeSpan Duration { get { return (End ?? DateTime.Now) - Start; } }
     }

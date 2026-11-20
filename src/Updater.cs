@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -10,14 +10,14 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyTitle("RyvenPanel")]
+[assembly: AssemblyTitle("PXMX")]
 [assembly: AssemblyDescription("RyvenMC Control Panel")]
 
 namespace RyvenPanel
 {
     class UpdateInfo
     {
-        public string Version, Sha256, Notes, Date;
+        public string Version, Sha256, Notes, Date, Signatur;
         public long Size;
     }
 
@@ -27,6 +27,8 @@ namespace RyvenPanel
     /// (/panel/update – same pinned certificate as the login), the owner via SSH. The new exe is checked against the
     /// SHA-256 from version.json, swapped in next to the running one (a running exe can be renamed, not overwritten)
     /// and started; the old file is deleted on the next start.
+    /// Every release must carry an ECDSA signature (version.json "signatur", see UpdateSignature) over version, SHA-256
+    /// and size, made with the owner's local key – a compromised server alone cannot push a different exe.
     /// </summary>
     static class Updater
     {
@@ -59,7 +61,7 @@ namespace RyvenPanel
         static UpdateInfo From(object d)
         {
             if (d == null) return null;
-            var u = new UpdateInfo { Version = J.S(d, "version"), Sha256 = J.S(d, "sha256"), Notes = J.S(d, "notes"), Date = J.S(d, "date"), Size = (long)J.N(d, "size") };
+            var u = new UpdateInfo { Version = J.S(d, "version"), Sha256 = J.S(d, "sha256"), Notes = J.S(d, "notes"), Date = J.S(d, "date"), Size = (long)J.N(d, "size"), Signatur = J.S(d, "signatur") };
             return string.IsNullOrEmpty(u.Version) || string.IsNullOrEmpty(u.Sha256) ? null : u;
         }
 
@@ -122,20 +124,22 @@ namespace RyvenPanel
         /// <summary>Verifies, swaps the exe and restarts. Does not return on success.</summary>
         static void Install(byte[] data, UpdateInfo u)
         {
-            if (!string.Equals(Sha(data), u.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new Exception("Die Prüfsumme stimmt nicht – der Download ist unvollständig oder beschädigt.");
+            if (!UpdateSignature.Verify(u.Version, u.Sha256, u.Size, u.Signatur))
+                throw new Exception("Das Update ist nicht gültig signiert und wird aus Sicherheitsgründen nicht installiert.");
+            if (data.LongLength != u.Size || !string.Equals(Sha(data), u.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new Exception("Die heruntergeladene Datei passt nicht zur signierten Prüfsumme – sie ist unvollständig, beschädigt oder wurde verändert. Update abgebrochen.");
             var exe = Application.ExecutablePath;
             var dir = Path.GetDirectoryName(exe);
             var neu = exe + ".new";
             try { File.WriteAllBytes(neu, data); }
             catch (UnauthorizedAccessException)
             {
-                throw new Exception("Keine Schreibrechte in " + dir + ".\nInstalliere das Panel mit RyvenPanel-Setup.exe, dann klappen Updates automatisch.");
+                throw new Exception("Keine Schreibrechte in " + dir + ".\nInstalliere das Panel mit PXMXPanel-Setup.exe, dann klappen Updates automatisch.");
             }
             try
             {
                 var an = AssemblyName.GetAssemblyName(neu);
-                if (an.Name != "RyvenPanel") throw new Exception("Die Datei ist kein RyvenPanel.");
+                if (an.Name != "RyvenPanel") throw new Exception("Die Datei ist kein PXMX Panel.");
             }
             catch (BadImageFormatException) { File.Delete(neu); throw new Exception("Die heruntergeladene Datei ist kein gültiges Programm."); }
             var old = Path.Combine(dir, "RyvenPanel." + DateTime.Now.Ticks + ".old");
@@ -155,6 +159,16 @@ namespace RyvenPanel
         static async Task<bool> Offer(IWin32Window owner, UpdateInfo u, Func<Task<byte[]>> download, Action<string, Color> status)
         {
             if (u == null || busy || !IsNewer(u.Version) || declined.Contains(u.Version)) return false;
+            if (!UpdateSignature.Verify(u.Version, u.Sha256, u.Size, u.Signatur))
+            {
+                declined.Add(u.Version);
+                if (status != null) status("Update " + u.Version + " abgelehnt: keine gültige Signatur.", Theme.Red);
+                MessageBox.Show(owner, "Auf dem Server liegt Version " + u.Version + ", sie ist aber " +
+                    (string.IsNullOrWhiteSpace(u.Signatur) ? "nicht signiert" : "nicht gültig signiert") + ".\n\n" +
+                    "Das Update wird aus Sicherheitsgründen NICHT installiert. Bitte informiere den Inhaber – möglicherweise wurde der Server manipuliert.",
+                    "PXMX – Update abgelehnt", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
             var text = "Version " + u.Version + " ist verfügbar (installiert: " + AppInfo.Version + ").\n\n" +
                        (string.IsNullOrWhiteSpace(u.Notes) ? "" : "Neu:\n" + u.Notes.Trim() + "\n\n") +
                        "Jetzt aktualisieren? Das Panel startet danach neu – Einstellungen und Anmeldung bleiben erhalten.";
@@ -167,7 +181,7 @@ namespace RyvenPanel
             busy = true;
             try
             {
-                if (status != null) status("Update " + u.Version + " wird geladen …", Theme.Cyan);
+                if (status != null) status("Update " + u.Version + " wird geladen …", Theme.SoftGreen);
                 var data = await download();
                 Install(data, u);
                 return true;
@@ -234,12 +248,15 @@ namespace RyvenPanel
             try { data = File.ReadAllBytes(Application.ExecutablePath); }
             catch (Exception ex) { status("Update nicht verteilt: " + ex.Message, Theme.Red); return false; }
             var sha = Sha(data);
+            string sig;   // signed locally (key never leaves this PC) before anything is uploaded
+            try { sig = UpdateSignature.Sign(AppInfo.Version, sha, data.LongLength); }
+            catch (Exception ex) { status("Update nicht verteilt: " + ex.Message, Theme.Red); return false; }
             var info = new Dictionary<string, object>
             {
                 { "version", AppInfo.Version }, { "sha256", sha }, { "size", data.LongLength },
-                { "notes", notes ?? "" }, { "date", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") }
+                { "notes", notes ?? "" }, { "date", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") }, { "signatur", sig }
             };
-            status("Version " + AppInfo.Version + " wird auf den Server geladen …", Theme.Cyan);
+            status("Version " + AppInfo.Version + " wird auf den Server geladen …", Theme.SoftGreen);
             var tmp = RemoteDir + "/RyvenPanel.exe.tmp";
             var script =
                 "set -e\nmkdir -p " + RemoteDir + "\n" +

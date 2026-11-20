@@ -29,7 +29,11 @@ namespace RyvenPanel
         FirewallView firewall;
         UserView users;
         EconomyView economy;
+        FinanzenView finanzen;
         ModerationView moderation;
+        DatenschutzView datenschutz;
+        NetzView netz;
+        KiView ki;
         ModClient modClient;
         int mode;
         bool dockerMode { get { return mode != 0; } }
@@ -91,6 +95,83 @@ namespace RyvenPanel
         bool permBusy;
         Label whoLbl, unameLbl;
 
+        // gateway outage banner + auto reconnect (5s -> 60s exponential backoff)
+        readonly Timer reconnectTimer = new Timer { Interval = 1000 };
+        Panel connBanner;
+        Label connLbl;
+        int reconnectDelay = 5, reconnectLeft;
+        bool reconnectBusy;
+
+        void OnConnState(Api.ConnState c)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try { BeginInvoke(new Action(() => ApplyConnState(c))); } catch { }
+        }
+
+        void EnsureBanner()
+        {
+            if (connBanner != null) return;
+            connBanner = new Panel { Dock = DockStyle.Top, Height = 34, BackColor = Color.FromArgb(120, 60, 20), Visible = false };
+            var btn = new Button { Text = "Jetzt erneut versuchen", Dock = DockStyle.Right, Width = 190, FlatStyle = FlatStyle.Flat, ForeColor = Color.White, BackColor = Color.FromArgb(160, 90, 30), Cursor = Cursors.Hand };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.Click += async (s, e) => { reconnectLeft = 1; await ReconnectTick(); };
+            connLbl = new Label { Dock = DockStyle.Fill, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(14, 0, 0, 0), AutoEllipsis = true };
+            connBanner.Controls.Add(connLbl);
+            connBanner.Controls.Add(btn);
+            Controls.Add(connBanner);
+        }
+
+        void ApplyConnState(Api.ConnState c)
+        {
+            if (closingForLogin || IsDisposed) return;
+            if (c == Api.ConnState.Disrupted)
+            {
+                EnsureBanner();
+                if (!connBanner.Visible)
+                {
+                    reconnectDelay = 5; reconnectLeft = reconnectDelay;
+                    connBanner.Visible = true;
+                    reconnectTimer.Start();
+                }
+                UpdateBannerText();
+            }
+            else if (c == Api.ConnState.Online)
+            {
+                reconnectTimer.Stop();
+                if (connBanner != null && connBanner.Visible)
+                {
+                    connBanner.Visible = false;
+                    SetStatus("Verbindung zum Server wiederhergestellt.", Theme.Green);
+                }
+            }
+            else reconnectTimer.Stop(); // session expired: api.Unauthorized sends the user back to login
+        }
+
+        void UpdateBannerText()
+        {
+            if (connLbl != null)
+                connLbl.Text = reconnectBusy || reconnectLeft <= 0 ? "Verbindung zum Server unterbrochen – Versuch läuft …"
+                    : "Verbindung zum Server unterbrochen – neuer Versuch in " + reconnectLeft + "s …";
+        }
+
+        async Task ReconnectTick()
+        {
+            if (reconnectBusy || closingForLogin || IsDisposed) return;
+            if (--reconnectLeft > 0) { UpdateBannerText(); return; }
+            reconnectBusy = true;
+            UpdateBannerText();
+            try
+            {
+                await api.Get("/panel/me"); // success flips Api.State to Online and hides the banner
+                if (Api.State == Api.ConnState.Disrupted)
+                {
+                    reconnectDelay = Math.Min(60, reconnectDelay * 2);
+                    reconnectLeft = reconnectDelay;
+                }
+            }
+            finally { reconnectBusy = false; UpdateBannerText(); }
+        }
+
         public MainForm(Api api, Settings st, string user, TeamSession team = null)
         {
             this.api = api;
@@ -98,8 +179,14 @@ namespace RyvenPanel
             this.user = user;
             this.team = team;
             api.Unauthorized += () => BeginInvoke(new Action(SessionExpired));
+            if (team != null)
+            {
+                Api.StateChanged += OnConnState;
+                reconnectTimer.Tick += async (s, e) => await ReconnectTick();
+                Disposed += (s, e) => { Api.StateChanged -= OnConnState; reconnectTimer.Stop(); };
+            }
 
-            Text = "RyvenPanel";
+            Text = "PXMX";
             ClientSize = new Size(1320, 820);
             StartPosition = FormStartPosition.CenterScreen;
             KeyPreview = true;
@@ -109,6 +196,12 @@ namespace RyvenPanel
             logTimer.Tick += async (s, e) => await PollLog();
             Shown += async (s, e) =>
             {
+                if (team == null && docker.Ssh.KeyExists)
+                {
+                    var dev = await HardwareId.CheckOwner(docker.Ssh);
+                    if (dev == false) { HardwareId.ShowBlocked(this); dirty = false; Close(); return; }
+                    if (dev == null) SetStatus("Owner-Gerätebindung nicht aktiv.", Theme.Muted);
+                }
                 await LoadServers();
                 if (team == null && docker.Ssh.KeyExists) await teamView.CheckPending();
                 if (team == null) await Updater.OwnerSync(this, docker.Ssh, SetStatus);
@@ -146,17 +239,18 @@ namespace RyvenPanel
             status.AutoSize = false;
             status.AutoEllipsis = true;
             status.TextAlign = ContentAlignment.MiddleLeft;
-            var who = whoLbl = Theme.Lbl(team != null ? "Team-Zugang  ·  Rang " + team.Rank : api.BaseUrl.Replace("https://", ""), Theme.F(9f), team != null ? Theme.Cyan : Theme.Muted, Theme.Side);
+            var who = whoLbl = Theme.Lbl(team != null ? "Team-Zugang  ·  Rang " + team.Rank : (api.DisplayUrl ?? api.BaseUrl).Replace("https://", ""), Theme.F(9f), team != null ? Theme.SoftGreen : Theme.Muted, Theme.Side);
             who.Dock = DockStyle.Right;
             who.AutoSize = false;
             who.Width = 220;
             who.TextAlign = ContentAlignment.MiddleRight;
             bar.Controls.Add(status);
             bar.Controls.Add(who);
+            Ssh.NotfallActivated += m => { try { BeginInvoke(new Action(() => SetStatus(m, Theme.Yellow))); } catch { } };
 
             // ── sidebar: logo, search, categorised navigation, account ──
             var sideTop = new Panel { Dock = DockStyle.Top, Height = 66, BackColor = Theme.Side };
-            var logo = new GradientText("RyvenMC", Theme.F(19f, FontStyle.Bold)) { Location = new Point(16, 10), BackColor = Theme.Side };
+            var logo = new GradientText("PXMX", Theme.F(19f, FontStyle.Bold)) { Location = new Point(16, 10), BackColor = Theme.Side };
             var tag = Theme.Lbl("CONTROL PANEL  ·  v" + AppInfo.Version,Theme.F(7.5f, FontStyle.Bold), Theme.Muted, Theme.Side);
             tag.Location = new Point(20, 46);
             sideTop.Controls.AddRange(new Control[] { logo, tag });
@@ -173,6 +267,10 @@ namespace RyvenPanel
                 new object[] { null, 3, Icons.People, "Nutzer & Ränge", "Money, Coins, Ränge, Permissions, Bans" },
                 new object[] { null, 8, Icons.Chart, "Wirtschaft", "Geldfluss, Shop-Preise, Crates – wie viel Geld ist im Umlauf?" },
                 new object[] { null, 9, Icons.Block, "Moderation", "Reports, Strafen (Ban/Mute/Kick/Warn) und Discord-Verify – netzwerkweit" },
+                new object[] { "ÜBERWACHUNG", null, null, null },
+                new object[] { null, 10, Icons.Lock, "Datenschutz", "Verbindungs-Wächter, DSGVO-Löschungen, Auskunft, Plugin-Doku, Verzeichnis" },
+                new object[] { null, 12, Icons.Robot, "KI-Support", "Fragen an die KI, Eskalationen, Wissen, Limits" },
+                new object[] { null, 11, Icons.Network, "Netzwerk-Monitor", "Paketverlust, Latenz, Ausfälle – mit Beweiskette" },
                 new object[] { "SERVER & SYSTEM", null, null, null },
                 new object[] { null, 4, Icons.Terminal, "Terminal", "SSH-Konsole des Servers" },
                 new object[] { null, 5, Icons.Folder, "Dateien", "Alle Dateien des Servers (SFTP)" },
@@ -180,8 +278,9 @@ namespace RyvenPanel
                 new object[] { null, 6, Icons.Shield, "Firewall", "Ports öffnen/schließen, IPs sperren" },
                 new object[] { "VERWALTUNG", null, null, null },
                 new object[] { null, 7, Icons.Key, "Team & Zugänge", "Team-Logins, Rechte pro Rang, IP-Freigaben, Protokoll" },
+                new object[] { null, 13, Icons.Coins, "Finanzen", "Buchhaltung: Ausgaben, Einnahmen, Belege, Jahresübersicht, Export" },
             };
-            nav = new NavItem[10];
+            nav = new NavItem[14];
             var navCtrls = new List<Control>();
             foreach (var d in navDefs)
             {
@@ -189,7 +288,7 @@ namespace RyvenPanel
                 {
                     var cat = Theme.Lbl((string)d[0], Theme.F(7.75f, FontStyle.Bold), Theme.Muted, Theme.Side);
                     cat.AutoSize = false; cat.Dock = DockStyle.Top; cat.Height = 27; cat.Padding = new Padding(20, 10, 0, 0);
-                    if (team != null && (string)d[0] != "MINECRAFT") cat.Visible = false;
+                    if (team != null && (string)d[0] != "MINECRAFT" && (string)d[0] != "ÜBERWACHUNG") cat.Visible = false;
                     navCtrls.Add(cat);
                     continue;
                 }
@@ -215,9 +314,12 @@ namespace RyvenPanel
             if (team != null)
             {
                 uname.Cursor = avatar.Cursor = Cursors.Hand;
-                uname.Tip("Klicken: Passwort ändern");
-                avatar.Tip("Klicken: Passwort ändern");
-                EventHandler pw = async (s, e) => { if (await TeamSession.ChangePassword(this, api, null, false)) SetStatus("Passwort geändert.", Theme.Green); };
+                uname.Tip("Klicken: Passwort ändern oder 2FA einrichten");
+                avatar.Tip("Klicken: Passwort ändern oder 2FA einrichten");
+                var kontoMenu = new ContextMenuStrip();
+                kontoMenu.Items.Add("Passwort ändern …", null, async (s, e) => { if (await TeamSession.ChangePassword(this, api, null, false)) SetStatus("Passwort geändert.", Theme.Green); });
+                kontoMenu.Items.Add("Zwei-Faktor-Anmeldung (2FA) …", null, async (s, e) => { if (await ZweiFaktorDialog.Open(this, api, false)) SetStatus("2FA ist aktiv.", Theme.Green); });
+                EventHandler pw = (s, e) => { var c = (Control)s; kontoMenu.Show(c, new Point(0, c.Height)); };
                 uname.Click += pw;
                 avatar.Click += pw;
             }
@@ -264,7 +366,7 @@ namespace RyvenPanel
             var line = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = Theme.Border };
             line.Paint += (s, e) =>
             {
-                using (var b = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, line.Width), 1), Theme.Alpha(Theme.Cyan, 90), Theme.Alpha(Theme.Pink, 10), 0f))
+                using (var b = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, line.Width), 1), Theme.Alpha(Theme.SoftGreen, 90), Theme.Alpha(Theme.Mint, 10), 0f))
                     e.Graphics.FillRectangle(b, 0, 0, line.Width, 1);
             };
             header.Controls.AddRange(new Control[] { hName, hSub, hPill, tabOverview, tabConsole, tabFiles, tabMetrics, tabAdmin, line });
@@ -301,9 +403,14 @@ namespace RyvenPanel
             files.OpenTerminalAt = dir => { SetMode(4); terminal.Open(System.IO.Path.GetFileName(dir.TrimEnd('/')) + "/", dir, null); };
             users = new UserView(api, () => servers.ToList(), getSsh, sshOk, SetStatus, () => firewall) { Visible = false };
             economy = new EconomyView(api, team != null, Can("economy.edit"), getSsh, sshOk, SetStatus) { Visible = false };
+            finanzen = new FinanzenView(api, team != null, getSsh, sshOk, SetStatus) { Visible = false };
             modClient = new ModClient(api, team != null, getSsh) { Actor = user + " (Panel)" };
             moderation = new ModerationView(modClient, SetStatus) { Visible = false };
             users.Mod = modClient;
+            datenschutz = new DatenschutzView(modClient, SetStatus) { Visible = false, Can = Can };
+            datenschutz.BadgeChanged += (a, b) => { if (nav[10] != null) { nav[10].Badge = a + b > 0 ? (a + b).ToString() : null; nav[10].Invalidate(); } };
+            netz = new NetzView(api, team != null, getSsh, sshOk, SetStatus) { Visible = false };
+            ki = new KiView(modClient, SetStatus) { Visible = false, CanEdit = Can("ki.edit") };
             teamView = new TeamView(getSsh, sshOk, SetStatus, () => team == null ? api.Token : null) { Visible = false, GetFirewall = () => firewall };
             teamView.PendingChanged = n => { nav[7].Badge = n > 0 ? n.ToString() : null; nav[7].Invalidate(); };
             main.Controls.Add(teamView);
@@ -312,7 +419,11 @@ namespace RyvenPanel
             main.Controls.Add(players);
             main.Controls.Add(users);
             main.Controls.Add(economy);
+            main.Controls.Add(finanzen);
             main.Controls.Add(moderation);
+            main.Controls.Add(datenschutz);
+            main.Controls.Add(netz);
+            main.Controls.Add(ki);
             main.Controls.Add(terminal);
             main.Controls.Add(files);
             main.Controls.Add(firewall);
@@ -408,7 +519,11 @@ namespace RyvenPanel
                 PI("Bereich", Icons.People, "Nutzer & Ränge", "Money, Coins, Ränge, Permissions, Bans", () => SetMode(3), "user luckperms rang rank perms geld"),
                 PI("Bereich", Icons.Chart, "Wirtschaft", "Geldmenge, Shop, Preise, Crates", () => SetMode(8), "economy geld money shop preise crates inflation"),
                 PI("Bereich", Icons.Block, "Moderation", "Reports, Strafen, Verify, Spieler bestrafen", () => SetMode(9), "report ban mute kick warn verwarnen strafe verify discord link"),
+                PI("Bereich", Icons.Coins, "Finanzen", "Buchhaltung: Ausgaben, Einnahmen, Belege, Export", () => SetMode(13), "buchhaltung kosten ausgaben einnahmen beleg rechnung export steuer"),
                 PI("Aktion", Icons.Block, "Spieler bestrafen", "Verwarnen, Kicken, Muten, Bannen – netzwerkweit", async () => { SetMode(9); await PunishDialog.Run(this, modClient, "", "warn", "", SetStatus); }, "ban mute kick warn"),
+                PI("Bereich", Icons.Lock, "Datenschutz", "Wächter, DSGVO-Löschungen, Auskunft, Plugin-Doku", () => SetMode(10), "dsgvo gdpr löschen auskunft wächter verbindungen plugins verzeichnis"),
+                PI("Bereich", Icons.Robot, "KI-Support", "Fragen, Eskalationen, Wissen, Limits", () => SetMode(12), "ki ai support frage eskalation wissen bot"),
+                PI("Bereich", Icons.Network, "Netzwerk-Monitor", "Paketverlust, Latenz, Ausfälle", () => SetMode(11), "netz ping verlust latenz ausfall hoster"),
                 PI("Bereich", Icons.Terminal, "Terminal", "SSH-Konsole des Servers", () => SetMode(4), "ssh shell bash konsole"),
                 PI("Bereich", Icons.Folder, "Dateien", "Alle Server-Dateien (SFTP)", () => SetMode(5), "sftp upload download"),
                 PI("Bereich", Icons.Package, "Docker", "Container, Stacks, Images", () => SetMode(1), "container"),
@@ -465,7 +580,11 @@ namespace RyvenPanel
         {
             if (team == null) return;
             // sidebar: team members see the server area and – with economy.view – the economy tab
-            for (int i = 1; i < nav.Length; i++) if (nav[i] != null) nav[i].Visible = (i == 8 && Can("economy.view")) || (i == 9 && Can("moderation.view"));
+            for (int i = 1; i < nav.Length; i++) if (nav[i] != null) nav[i].Visible = (i == 8 && Can("economy.view")) || (i == 9 && Can("moderation.view"))
+                || (i == 10 && Can("datenschutz.view")) || (i == 11 && Can("netzwerk.view")) || (i == 12 && Can("ki.view")) || (i == 13 && Can("finanzen.view"));
+            datenschutz.ApplyPerms(); ki.CanEdit = Can("ki.edit"); ki.ApplyPerms();
+            if ((mode == 10 && !Can("datenschutz.view")) || (mode == 11 && !Can("netzwerk.view")) || (mode == 12 && !Can("ki.view")) || (mode == 13 && !Can("finanzen.view"))) SetMode(0);
+            finanzen.SetCanEdit(Can("finanzen.edit"));
             modClient.CanView = Can("moderation.view"); modClient.CanReports = Can("moderation.reports");
             modClient.CanPunish = Can("moderation.punish"); modClient.CanBan = Can("moderation.ban");
             moderation.ApplyPerms();
@@ -513,7 +632,7 @@ namespace RyvenPanel
                 unameLbl.Text = user + "  ·  " + team.Rank;
                 ApplyPermissions();
                 if (!hadEco && Can("economy.view")) SetStatus("Deine Rechte wurden geändert – der Bereich „Wirtschaft“ ist jetzt freigeschaltet.", Theme.Green);
-                else SetStatus("Deine Rechte wurden vom Owner geändert (Rang " + team.Rank + ").", Theme.Cyan);
+                else SetStatus("Deine Rechte wurden vom Owner geändert (Rang " + team.Rank + ").", Theme.SoftGreen);
             }
             finally { permBusy = false; }
         }
@@ -522,7 +641,11 @@ namespace RyvenPanel
         {
             var all = new List<PaletteItem> { PI("Bereich", Icons.Server, "Server-Steuerung", "Server und Status", () => SetMode(0)) };
             if (Can("economy.view")) all.Add(PI("Bereich", Icons.Chart, "Wirtschaft", "Geldmenge, Shop, Preise, Crates", () => SetMode(8), "economy geld shop preise crates"));
+            if (Can("finanzen.view")) all.Add(PI("Bereich", Icons.Coins, "Finanzen", "Buchhaltung, Belege, Export", () => SetMode(13), "buchhaltung kosten ausgaben einnahmen beleg"));
             if (Can("moderation.view")) all.Add(PI("Bereich", Icons.Block, "Moderation", "Reports, Strafen, Verify", () => SetMode(9), "report ban mute kick warn strafe verify"));
+            if (Can("datenschutz.view")) all.Add(PI("Bereich", Icons.Lock, "Datenschutz", "Wächter, Löschungen, Auskunft", () => SetMode(10), "dsgvo löschen auskunft wächter"));
+            if (Can("netzwerk.view")) all.Add(PI("Bereich", Icons.Network, "Netzwerk-Monitor", "Paketverlust, Latenz, Ausfälle", () => SetMode(11), "netz ping verlust"));
+            if (Can("ki.view")) all.Add(PI("Bereich", Icons.Robot, "KI-Support", "Fragen, Eskalationen, Wissen", () => SetMode(12), "ki ai support"));
             if (Can("moderation.punish") || Can("moderation.ban")) all.Add(PI("Aktion", Icons.Block, "Spieler bestrafen", "Verwarnen, Kicken, Muten, Bannen", async () => { SetMode(9); await PunishDialog.Run(this, modClient, "", "warn", "", SetStatus); }, "ban mute kick warn"));
             var tabs = new[] { new object[] { "Übersicht", 0, "servers.view" }, new object[] { "Konsole", 1, "console.view" }, new object[] { "Dateien", 2, "files.view" },
                                new object[] { "Metriken", 3, "servers.view" }, new object[] { "Verwaltung", 4, "console.command" } };
@@ -565,7 +688,14 @@ namespace RyvenPanel
             teamView.Visible = m == 7;
             economy.Visible = m == 8;
             moderation.Visible = m == 9;
+            datenschutz.Visible = m == 10;
+            netz.Visible = m == 11;
+            ki.Visible = m == 12;
+            finanzen.Visible = m == 13;
             if (m != 9) moderation.Deactivate();
+            if (m != 10) datenschutz.Deactivate();
+            if (m != 12) ki.Deactivate();
+            if (m != 13) finanzen.Deactivate();
             if (m != 7) teamView.Deactivate();
             if (m != 1) docker.Deactivate();
             if (m != 2) players.Deactivate();
@@ -580,6 +710,10 @@ namespace RyvenPanel
             if (m == 7) teamView.Activate();
             if (m == 8) economy.Activate();
             if (m == 9) moderation.Activate();
+            if (m == 10) datenschutz.Activate();
+            if (m == 11) netz.Activate();
+            if (m == 12) ki.Activate();
+            if (m == 13) finanzen.Activate();
         }
 
         int CurrentPage()
@@ -673,7 +807,7 @@ namespace RyvenPanel
                 var r = new Rectangle(e.Bounds.X, e.Bounds.Y + 2, e.Bounds.Width - 4, e.Bounds.Height - 4);
                 if (sel) using (var p = Theme.RoundRect(r, 8)) using (var b = new SolidBrush(Theme.CardHi)) g.FillPath(b, p);
                 var name = playerList.Items[e.Index].ToString();
-                using (var b = new SolidBrush(Theme.Mix(Theme.Accent, Theme.Cyan, (name.GetHashCode() & 0xff) / 255.0)))
+                using (var b = new SolidBrush(Theme.Mix(Theme.Accent, Theme.SoftGreen, (name.GetHashCode() & 0xff) / 255.0)))
                     g.FillEllipse(b, r.X + 10, r.Y + 7, 14, 14);
                 TextRenderer.DrawText(g, name, playerList.Font, new Point(r.X + 34, r.Y + 4), Theme.Text);
             };
@@ -1046,7 +1180,7 @@ namespace RyvenPanel
                 if (sel > 0.001)
                 {
                     int h = (int)((r.Height - Theme.Px(20)) * sel);
-                    using (var b = new LinearGradientBrush(new Rectangle(r.X, r.Y, 3, r.Height), Theme.Cyan, Theme.Pink, 90f))
+                    using (var b = new LinearGradientBrush(new Rectangle(r.X, r.Y, 3, r.Height), Theme.SoftGreen, Theme.Mint, 90f))
                         g.FillRectangle(b, r.X, r.Y + r.Height / 2 - h / 2, 3, Math.Max(1, h));
                 }
             }
@@ -1163,7 +1297,7 @@ namespace RyvenPanel
             double cpu = J.N(s, "cpu");
             cCpu.Set(running ? cpu.ToString("0.#", CultureInfo.InvariantCulture) + " %" : "–", running ? "Auslastung" : "", Theme.Text);
             cCpu.Bar = running ? cpu / 100.0 : -1;
-            cCpu.BarColor = cpu > 85 ? Theme.Red : cpu > 60 ? Theme.Yellow : Theme.Cyan;
+            cCpu.BarColor = cpu > 85 ? Theme.Red : cpu > 60 ? Theme.Yellow : Theme.SoftGreen;
             double memp = J.N(s, "mem_percent");
             var memText = FormatMem(J.Get(s, "mem"));
             double rss = ServerItem.ParseSize(memText);
@@ -1316,12 +1450,12 @@ namespace RyvenPanel
 
         static Color LineColor(string l)
         {
-            if (l.StartsWith("> ")) return Theme.Cyan;
+            if (l.StartsWith("> ")) return Theme.SoftGreen;
             if (l.StartsWith("──")) return Theme.Muted;
             if (l.Contains("ERROR") || l.Contains("SEVERE") || l.Contains("Exception") || l.StartsWith("\tat ") || l.StartsWith("Caused by")) return Theme.Red;
             if (l.Contains("WARN")) return Theme.Yellow;
             if (l.Contains("joined the game") || l.Contains("left the game") || l.Contains("has connected") || l.Contains("logged in")) return Theme.Green;
-            if (l.Contains("issued server command")) return Theme.Hex("#a99bff");
+            if (l.Contains("issued server command")) return Theme.Accent;
             return Theme.Text2;
         }
 
@@ -1637,7 +1771,7 @@ namespace RyvenPanel
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             chPlayers = new LineChart { Title = "Spieler online", LineColor = Theme.Green };
-            chCpu = new LineChart { Title = "CPU", Unit = " %", LineColor = Theme.Cyan };
+            chCpu = new LineChart { Title = "CPU", Unit = " %", LineColor = Theme.SoftGreen };
             chRam = new LineChart { Title = "RAM", Unit = " %", LineColor = Theme.Accent, FixedMax = 100 };
             int i = 0;
             foreach (var ch in new[] { chPlayers, chCpu, chRam })
@@ -1866,7 +2000,7 @@ namespace RyvenPanel
             if (dirty && !Dialogs.Confirm(this, "Abmelden", "Ungespeicherte Änderungen verwerfen und abmelden?")) return;
             closingForLogin = true;
             dirty = false;
-            if (team != null) { st.TeamToken = null; var t = api.Send("POST", "/panel/logout", "", "application/json"); t.Wait(3000); }
+            if (team != null) { st.TeamToken = null; var t = Task.Run(() => api.Send("POST", "/panel/logout", "", "application/json")); t.Wait(3000); } // Task.Run: no UI-context continuations, else Wait always runs into the 3 s timeout
             else st.Token = null;
             st.Save();
             DialogResult = DialogResult.Retry;

@@ -316,8 +316,8 @@ namespace RyvenPanel
             };
             iDir = mk(Theme.Hex("#e0b04a"), true, null);
             iFile = mk(Theme.Hex("#7d8599"), false, null);
-            iLink = mk(Theme.Hex("#55e0ff"), false, "↗");
-            iArchive = mk(Theme.Hex("#d966ff"), false, "Z");
+            iLink = mk(Theme.SoftGreen, false, "↗");
+            iArchive = mk(Theme.Mint, false, "Z");
             iJar = mk(Theme.Hex("#ff8a4c"), false, "J");
             iText = mk(Theme.Hex("#c3c8d4"), false, "T");
             iImage = mk(Theme.Hex("#3ddc84"), false, "▲");

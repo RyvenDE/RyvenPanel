@@ -1,6 +1,6 @@
-using System.Reflection;
+﻿using System.Reflection;
 
-// The one place for the version number. Raise it for every release – the panel compares it with the version
+// The one place for the version number. Raise it for every release â€“ the panel compares it with the version
 // published on the server and offers the update to everyone with an older one.
 [assembly: AssemblyVersion(RyvenPanel.AppInfo.Version + ".0")]
 [assembly: AssemblyFileVersion(RyvenPanel.AppInfo.Version + ".0")]
@@ -13,6 +13,6 @@ namespace RyvenPanel
 {
     static class AppInfo
     {
-        public const string Version = "1.3.0";
+        public const string Version = "1.6.1";
     }
 }

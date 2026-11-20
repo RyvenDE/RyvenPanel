@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -212,7 +213,7 @@ namespace RyvenPanel
             lOnline = new StatCard("Online jetzt") { BarColor = Theme.Green };
             lVpn = new StatCard("davon VPN / Proxy / Tor") { BarColor = Theme.Red };
             lHosting = new StatCard("Rechenzentrum-IPs") { BarColor = Theme.Yellow };
-            lCountries = new StatCard("Länder") { BarColor = Theme.Cyan };
+            lCountries = new StatCard("Länder") { BarColor = Theme.SoftGreen };
             var cards = CardRow(lOnline, lVpn, lHosting, lCountries);
 
             var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46, BackColor = Theme.Bg, WrapContents = false };
@@ -395,10 +396,17 @@ namespace RyvenPanel
                 var script = LogPrelude +
                     "for f in $(ls -1 *.log.gz 2>/dev/null | sort); do echo \"@@FILE $f\"; zcat \"$f\" | grep -aE \"$P\"; done\n" +
                     "[ -f latest.log ] && { echo \"@@LATEST $(date -r latest.log +%Y-%m-%d)\"; grep -aE \"$P\" latest.log; }\n" +
+                    "[ -f " + ManualFile + " ] && { echo '@@MANUAL'; cat " + ManualFile + "; }\n" +
                     "true";
                 var r = await getSsh().Run(script, 120000);
                 if (!r.Ok) { setStatus("Logs konnten nicht gelesen werden: " + r.Message, Theme.Red); return; }
-                sessions = Parse(r.Out);
+                var outText = r.Out.Replace("\r", "");
+                var cut = outText.IndexOf("\n@@MANUAL\n", StringComparison.Ordinal);
+                string logPart = outText, manualPart = "";
+                if (outText.StartsWith("@@MANUAL\n")) { logPart = ""; manualPart = outText.Substring(9); }
+                else if (cut >= 0) { logPart = outText.Substring(0, cut + 1); manualPart = outText.Substring(cut + 10); }
+                sessions = Parse(logPart);
+                sessions.AddRange(ParseManual(manualPart));
                 loadedOnce = true;
                 RenderHistory();
                 RenderVpnStats();
@@ -504,6 +512,35 @@ namespace RyvenPanel
             return result;
         }
 
+        /// <summary>Hand-made entries for VPN / alt tracking. One per line:
+        /// <c>YYYY-MM-DD[ HH:MM] Name IP [note …]</c> – '#' starts a comment.</summary>
+        public const string ManualFile = "/var/lib/ryvenpanel/manual-ips.txt";
+
+        static List<Session> ParseManual(string text)
+        {
+            var result = new List<Session>();
+            foreach (var raw in text.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#")) continue;
+                var parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                DateTime d;
+                if (parts.Count < 3 || !DateTime.TryParseExact(parts[0], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d)) continue;
+                parts.RemoveAt(0);
+                TimeSpan t;
+                if (parts.Count >= 3 && parts[0].Contains(":") && TimeSpan.TryParseExact(parts[0], @"h\:mm", CultureInfo.InvariantCulture, out t))
+                {
+                    d += t;
+                    parts.RemoveAt(0);
+                }
+                IPAddress ip;
+                if (parts.Count < 2 || !IPAddress.TryParse(parts[1], out ip)) continue;
+                var note = string.Join(" ", parts.Skip(2));
+                result.Add(new Session { Name = parts[0], Ip = parts[1], Start = d, End = d, Manual = true, Reason = "manuell" + (note.Length > 0 ? ": " + note : "") });
+            }
+            return result;
+        }
+
         static TimeSpan? TimeOf(string l)
         {
             if (l.Length < 10 || l[0] != '[' || l[9] != ']') return null;
@@ -591,10 +628,10 @@ namespace RyvenPanel
             {
                 var info = IpIntel.Get(s.Ip);
                 bool bad = info != null && info.Suspicious;
-                var row = Row(new RowTag { Key = s.Start.Ticks + s.Ip, Dot = !s.End.HasValue ? Theme.Green : s.EndedByRestart ? Theme.Yellow : Theme.Muted, Data = bad },
-                    s.Start.ToString("dd.MM.yy HH:mm:ss"),
-                    s.End.HasValue ? s.End.Value.ToString("dd.MM.yy HH:mm:ss") + (s.EndedByRestart ? " *" : "") : "online",
-                    Dur(s.Duration), s.Servers.Count > 0 ? string.Join(" → ", s.Servers) : "–", s.Ip, ProviderText(info, s.Ip), PlaceText(info),
+                var row = Row(new RowTag { Key = s.Start.Ticks + s.Ip + s.Manual, Dot = s.Manual ? Theme.SoftGreen : !s.End.HasValue ? Theme.Green : s.EndedByRestart ? Theme.Yellow : Theme.Muted, Data = bad },
+                    s.Start.ToString(s.Manual ? "dd.MM.yy" : "dd.MM.yy HH:mm:ss"),
+                    s.Manual ? "manuell" : s.End.HasValue ? s.End.Value.ToString("dd.MM.yy HH:mm:ss") + (s.EndedByRestart ? " *" : "") : "online",
+                    s.Manual ? "–" : Dur(s.Duration), s.Manual ? "–" : s.Servers.Count > 0 ? string.Join(" → ", s.Servers) : "–", s.Ip, ProviderText(info, s.Ip), PlaceText(info),
                     info == null ? "" : bad ? info.Flags : "sauber");
                 if (bad) row.SubItems[7].ForeColor = Theme.Red;
                 else if (info != null) row.SubItems[7].ForeColor = Theme.Green;
@@ -613,7 +650,7 @@ namespace RyvenPanel
         {
             var p = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
             vIps = new StatCard("IPs gesamt");
-            vChecked = new StatCard("geprüft") { BarColor = Theme.Cyan };
+            vChecked = new StatCard("geprüft") { BarColor = Theme.SoftGreen };
             vVpn = new StatCard("VPN") { BarColor = Theme.Red };
             vProxy = new StatCard("Proxy") { BarColor = Theme.Red };
             vTor = new StatCard("Tor / Relay") { BarColor = Theme.Red };
@@ -623,7 +660,7 @@ namespace RyvenPanel
 
             var chartCard = new RoundPanel { Dock = DockStyle.Top, Height = 230, Padding = new Padding(4, 4, 6, 10) };
             p.Resize += (s, e) => chartCard.Height = Math.Max(Theme.Px(120), Math.Min(Theme.Px(230), p.Height * 30 / 100));
-            vChart = new LineChart { Dock = DockStyle.Fill, Title = "Spieler pro Tag (30 Tage)", LineColor = Theme.Cyan, Line2Color = Theme.Red, Name1 = "Spieler", Name2 = "mit VPN/Proxy" };
+            vChart = new LineChart { Dock = DockStyle.Fill, Title = "Spieler pro Tag (30 Tage)", LineColor = Theme.SoftGreen, Line2Color = Theme.Red, Name1 = "Spieler", Name2 = "mit VPN/Proxy" };
             chartCard.Controls.Add(vChart);
             var gap = new Panel { Dock = DockStyle.Top, Height = 12, BackColor = Theme.Bg };
 
@@ -704,7 +741,7 @@ namespace RyvenPanel
                 var ipSet = new HashSet<string>(g.Select(i => i.Ip));
                 var players = sessions.Where(s => ipSet.Contains(s.Ip)).Select(s => s.Name.ToLowerInvariant()).Distinct().Count();
                 double share = g.Count() > 0 ? 100.0 * g.Count(i => i.Vpn || i.Proxy || i.Tor || i.Relay) / g.Count() : 0;
-                var row = Row(new RowTag { Key = g.Key, Dot = Theme.Cyan }, g.Key, players.ToString(), share.ToString("0", CultureInfo.InvariantCulture) + " %");
+                var row = Row(new RowTag { Key = g.Key, Dot = Theme.SoftGreen }, g.Key, players.ToString(), share.ToString("0", CultureInfo.InvariantCulture) + " %");
                 if (share > 0) row.SubItems[2].ForeColor = Theme.Red;
                 ctry.Add(row);
             }

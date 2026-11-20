@@ -127,7 +127,7 @@ namespace RyvenPanel
                 if (y > Height) break;
                 if (y + RowH >= 28)
                 {
-                    var col = it.Failed ? Theme.Red : it.Cancelled ? Theme.Muted : it.Finished ? Theme.Green : Theme.Cyan;
+                    var col = it.Failed ? Theme.Red : it.Cancelled ? Theme.Muted : it.Finished ? Theme.Green : Theme.SoftGreen;
                     TextRenderer.DrawText(g, it.Upload ? "↑" : "↓", Theme.F(10f, FontStyle.Bold), new Point(12, y + 5), col);
                     TextRenderer.DrawText(g, it.Name, Theme.F(9f, FontStyle.Bold), new Rectangle(30, y + 6, 260, 18), Theme.Text, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                     int bx = 300, bw = Math.Max(60, Width - bx - 330);
@@ -136,7 +136,7 @@ namespace RyvenPanel
                     double frac = it.Total > 0 ? Math.Min(1, (double)it.Done / it.Total) : (it.Finished && !it.Failed ? 1 : 0);
                     if (frac > 0.003)
                         using (var p = Theme.RoundRect(new RectangleF(bx, y + 12, (float)(bw * frac), 6), 3))
-                        using (var b = new LinearGradientBrush(new RectangleF(bx - 1, y, bw + 2, 10), Theme.Cyan, it.Failed ? Theme.Red : Theme.Pink, 0f))
+                        using (var b = new LinearGradientBrush(new RectangleF(bx - 1, y, bw + 2, 10), Theme.SoftGreen, it.Failed ? Theme.Red : Theme.Mint, 0f))
                             g.FillPath(b, p);
                     string info = it.Finished ? it.Status
                         : Theme.Bytes(it.Done) + (it.Total > 0 ? " / " + Theme.Bytes(it.Total) : "") + "  ·  " + Theme.Bytes(it.Speed) + "/s" + (it.Eta.Length > 0 ? "  ·  " + it.Eta : "");

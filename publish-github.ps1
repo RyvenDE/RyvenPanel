@@ -76,7 +76,8 @@ $rel = $null
 try { $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/tags/$tag" -Headers $h } catch { }
 if (-not $rel) {
     if (-not $Notes) { $Notes = "Neue Version $version." }
-    $text = "$Notes`n`n**Installation:** ``RyvenPanel-Setup-$version.exe`` herunterladen und starten – keine Adminrechte nötig.`nBereits installiert? Das Panel bietet Updates automatisch an, sobald der Owner sie verteilt."
+    $warn = "> [!WARNING]`n> **Speziell für das RyvenMC-Netzwerk angepasst – kein Plug-and-Play-Panel.**`n> - **KVM-Server mit Root/SSH ist Pflicht** – auf Minecraft-Hostern oder Webspace funktioniert es nicht.`n> - **Docker** wird vorausgesetzt (Crafty Controller + MariaDB/MySQL als Container).`n> - **Eigene Plugins** sind nötig, um auf die Daten zuzugreifen (z. B. RyvenEco, RyvenLink, LuckPerms mit MySQL).`n>`n> Details: [README](https://github.com/RyvenDE/RyvenPanel#readme)`n`n"
+    $text = $warn + "$Notes`n`n**Installation:** ``RyvenPanel-Setup-$version.exe`` herunterladen und starten – keine Adminrechte nötig.`nBereits installiert? Das Panel bietet Updates automatisch an, sobald der Owner sie verteilt."
     $body = @{ tag_name = $tag; name = "RyvenPanel $version"; body = $text; make_latest = 'true' } | ConvertTo-Json
     $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases" -Method Post -Headers $h -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8'
 }

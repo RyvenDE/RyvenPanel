@@ -30,16 +30,23 @@ namespace RyvenPanel
         ProgressLine progress;
         Field fPort;
         Label setupInfo;
-        ListView rankList, accList, reqList, logList;
+        ListView rankList, accList, reqList, logList, apiList, sessList;
+        Field fSearch;
+        ComboBox cRes, cWho, cSpan;
+        List<object> apiKeys = new List<object>();
+        List<string> apiPerms = new List<string>();
+        bool logFiltered;
         FlowLayoutPanel permBox;
         Label permTitle, addrLbl;
-        TextBox blocked;
+        TextBox blocked, tfaRanks;
         readonly Dictionary<string, CheckBox> permChecks = new Dictionary<string, CheckBox>();
         Dictionary<string, object> state;
         Dictionary<string, List<string>> roles = new Dictionary<string, List<string>>();
         string selRank, thumb;
         int port = 8444;
         bool busy, installed;
+        /// <summary>Rechte-Kästchen wurden geändert, aber noch nicht gespeichert – das Neuladen darf sie dann nicht überschreiben.</summary>
+        bool permsDirty, settingChecks;
         readonly Timer poll = new Timer { Interval = 20000 };
 
         const string Py = "python3 /opt/ryvenpanel/gateway.py";
@@ -53,7 +60,8 @@ namespace RyvenPanel
             Dock = DockStyle.Fill;
             BackColor = Theme.Bg;
             Build();
-            poll.Tick += async (s, e) => { if (Visible && !busy) await Reload(false); };
+            // Nicht neu laden, solange ein Dialog (z. B. „Passwort zurücksetzen“) offen ist – sonst kollidiert das mit der Aktion.
+            poll.Tick += async (s, e) => { if (Visible && !busy && Form.ActiveForm == FindForm()) await Reload(false); };
         }
 
         public async void Activate()
@@ -82,12 +90,31 @@ namespace RyvenPanel
 
         bool updateTried;
 
+        /// <summary>"2.10" &gt; "2.9"; leere/kaputte Versionen gelten als 0.</summary>
+        static int[] Teile(string v)
+        {
+            return Regex.Split(v ?? "", "[^0-9]+").Where(s => s.Length > 0).Select(s => { int n; return int.TryParse(s, out n) ? n : 0; }).ToArray();
+        }
+
+        static int VersionCompare(string a, string b)
+        {
+            var x = Teile(a);
+            var y = Teile(b);
+            for (int i = 0; i < Math.Max(x.Length, y.Length); i++)
+            {
+                int p = i < x.Length ? x[i] : 0, q = i < y.Length ? y[i] : 0;
+                if (p != q) return p.CompareTo(q);
+            }
+            return 0;
+        }
+
         /// <summary>The gateway ships inside this exe – if the server runs an older version, replace it (once per app start).</summary>
         async Task<bool> EnsureCurrent(Dictionary<string, object> st)
         {
             var want = Regex.Match(GatewaySource(), "^VERSION = \"([^\"]+)\"", RegexOptions.Multiline).Groups[1].Value;
             var have = J.S(st, "version") ?? "";
-            if (updateTried || want.Length == 0 || have == want) return false;
+            // nur ältere Server-Versionen ersetzen – eine neuere (z. B. für das Web-Panel) niemals zurücksetzen
+            if (updateTried || want.Length == 0 || VersionCompare(have, want) >= 0) return false;
             updateTried = true;
             var script =
                 "set -e\ncd /opt/ryvenpanel\n" +
@@ -111,10 +138,10 @@ namespace RyvenPanel
         // ───────────────────────────── Layout ─────────────────────────────
         void Build()
         {
-            var header = Ui.Header("Team & Zugänge", out hSub, new[] { "Rechte", "Accounts", "IP-Freigaben", "Protokoll", "Einstellungen" }, out tabs, i => SetTab(i));
+            var header = Ui.Header("Team & Zugänge", out hSub, new[] { "Accounts", "Ränge & Rechte", "IP-Freigaben", "API-Schlüssel", "Sitzungen", "Protokoll", "Einstellungen" }, out tabs, i => SetTab(i));
             progress = new ProgressLine { Dock = DockStyle.Top, BackColor = Theme.Bg };
             body = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, 12, 0, 0), Visible = false };
-            pages = new[] { BuildRights(), BuildAccounts(), BuildRequests(), BuildLog(), BuildSettings() };
+            pages = new[] { BuildAccounts(), BuildRights(), BuildRequests(), BuildApi(), BuildSessions(), BuildLog(), BuildSettings() };
             foreach (var p in pages) body.Controls.Add(p);
             BuildSetup();
             Controls.Add(body);
@@ -199,8 +226,15 @@ namespace RyvenPanel
             split.Panel2.Controls.Add(c2);
             p.Controls.Add(split);
 
-            rankList.SelectedIndexChanged += (s, e) => { var r = Ui.Sel(rankList); if (r != null) ShowRank(r); };
-            Action<Func<string, bool>> setAll = f => { foreach (var kv in permChecks) kv.Value.Checked = f(kv.Key); };
+            rankList.SelectedIndexChanged += (s, e) =>
+            {
+                var r = Ui.Sel(rankList);
+                if (r == null || (r == selRank && permsDirty)) return;   // Neuladen wählt denselben Rang neu aus → Änderungen behalten
+                if (permsDirty && selRank != null && !Dialogs.Confirm(FindForm(), "Nicht gespeichert",
+                        "Die Rechte für „" + selRank + "“ wurden geändert, aber nicht gespeichert.\n\nVerwerfen und zu „" + r + "“ wechseln?")) return;
+                ShowRank(r);
+            };
+            Action<Func<string, bool>> setAll = f => { foreach (var kv in permChecks) kv.Value.Checked = f(kv.Key); permsDirty = true; };
             bAll.Click += (s, e) => setAll(k => true);
             bRead.Click += (s, e) => setAll(k => k == "servers.view" || k == "console.view");
             bNone.Click += (s, e) => setAll(k => false);
@@ -208,9 +242,15 @@ namespace RyvenPanel
             {
                 if (selRank == null) return;
                 roles[selRank] = permChecks.Where(kv => kv.Value.Checked).Select(kv => kv.Key).ToList();
+                if (selRank == "owner" && !roles[selRank].Contains("team.manage") && !Dialogs.Confirm(FindForm(), "Achtung",
+                        "Der Rang „owner“ verliert „team.manage“ – im Web-Panel kann dann niemand mehr das Team verwalten (dieses Fenster bleibt über SSH nutzbar).\n\nWirklich speichern?")) return;
                 if (roles[selRank].Contains("console.command.unrestricted") && !Dialogs.Confirm(FindForm(), "Achtung",
                         "„Alle Konsolenbefehle“ erlaubt auch op, lp, stop usw. – damit kann sich der Rang selbst alle Rechte geben.\n\nWirklich freigeben?")) return;
-                await Admin("roles", roles.Where(kv => kv.Value.Count > 0).ToDictionary(kv => kv.Key, kv => (object)kv.Value), "Rechte für „" + selRank + "“ gespeichert");
+                if (await Admin("roles", roles.Where(kv => kv.Value.Count > 0).ToDictionary(kv => kv.Key, kv => (object)kv.Value), "Rechte für „" + selRank + "“ gespeichert"))
+                {
+                    permsDirty = false;
+                    ShowRank(selRank);
+                }
             };
             return p;
         }
@@ -223,10 +263,11 @@ namespace RyvenPanel
             var bPw = Ui.Btn("Passwort zurücksetzen", Theme.CardHi).Tip("Neues Startpasswort vergeben – das Mitglied muss es beim nächsten Login ändern");
             var bIp = Ui.Btn("IPs ▾", Theme.CardHi).Tip("Weitere IP freigeben oder eine entfernen");
             var bKick = Ui.Btn("Abmelden erzwingen", Theme.CardHi);
+            var bTfa = Ui.Btn("2FA zurücksetzen", Theme.CardHi).Tip("Zwei-Faktor-Authentifizierung des Accounts löschen (z. B. Handy verloren); das Mitglied richtet sie neu ein");
             var bFreeze = Ui.Btn("Sperren / Entsperren", Theme.Mix(Theme.Red, Theme.Bg, 0.35));
             var bDel = Ui.Btn("Löschen", Theme.Mix(Theme.Red, Theme.Bg, 0.35));
-            var bar = Ui.Bar(46, bNew, bEdit, bPw, bIp, bKick, bFreeze, bDel);
-            accList = Ui.List(new[] { "Benutzer", "Rechte von", "Rang", "Freigegebene IPs", "Letzter Login", "Status" }, new[] { 130, 170, 100, 200, 130, 130 });
+            var bar = Ui.Bar(46, bNew, bEdit, bPw, bTfa, bIp, bKick, bFreeze, bDel);
+            accList = Ui.List(new[] { "Benutzer", "Rechte von", "Rang", "Freigegebene IPs", "Letzter Login", "Status", "2FA" }, new[] { 130, 170, 100, 200, 130, 130, 70 });
             var c = new RoundPanel { Dock = DockStyle.Fill, Padding = new Padding(8, 10, 8, 8) };
             c.Controls.Add(accList);
             p.Controls.Add(c);
@@ -241,10 +282,14 @@ namespace RyvenPanel
             bPw.Click += async (s, e) =>
             {
                 var a = sel(); if (a == null) return;
-                var pw = Dialogs.Ask(FindForm(), "Passwort zurücksetzen", "Neues Startpasswort für „" + name(a) + "“ (beim nächsten Login muss ein eigenes gewählt werden):", NewPassword());
+                var user = name(a);
+                var pw = Dialogs.Ask(FindForm(), "Passwort zurücksetzen", "Neues Startpasswort für „" + user + "“ (beim nächsten Login muss ein eigenes gewählt werden):", NewPassword());
                 if (pw == null) return;
+                pw = pw.Trim();
+                var problem = PasswordProblem(pw);
+                if (problem != null) { MessageBox.Show(FindForm(), problem, "Passwort zurücksetzen", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
                 var d = act(a, "password"); d["password"] = pw;
-                if (await Admin("user", d, "Passwort von " + name(a) + " zurückgesetzt")) ShowCredentials(name(a), pw);
+                if (await Admin("user", d, "Passwort von " + user + " zurückgesetzt", true)) ShowCredentials(user, pw);
             };
             bIp.Click += (s, e) =>
             {
@@ -265,6 +310,13 @@ namespace RyvenPanel
                 }
                 Ui.DropDown(bIp, m);
             };
+            bTfa.Click += async (s, e) =>
+            {
+                var a = sel(); if (a == null) return;
+                if (J.N(a, "totp_on") <= 0) { MessageBox.Show(FindForm(), "Für „" + name(a) + "“ ist keine 2FA aktiv.", "2FA", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+                if (!Dialogs.Confirm(FindForm(), "2FA zurücksetzen", "2FA von „" + name(a) + "“ löschen? Alle Sitzungen enden; die Person muss 2FA neu einrichten.")) return;
+                await Admin("tfa", act(a, "reset"), "2FA von " + name(a) + " zurückgesetzt");
+            };
             bKick.Click += async (s, e) => { var a = sel(); if (a != null) await Admin("user", act(a, "kick"), "Sitzung beendet"); };
             bFreeze.Click += async (s, e) =>
             {
@@ -282,6 +334,16 @@ namespace RyvenPanel
         }
 
         static double NowUnix() { return (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds; }
+
+        /// <summary>Dieselben Regeln wie im Team-Dienst (pw_problem) – so kommt die Meldung sofort und verständlich.</summary>
+        static string PasswordProblem(string pw)
+        {
+            if (string.IsNullOrEmpty(pw) || pw.Length < 8) return "Das Passwort muss mindestens 8 Zeichen lang sein.";
+            if (pw.Length > 200) return "Das Passwort ist zu lang.";
+            bool mixed = pw.ToLowerInvariant() != pw && pw.ToUpperInvariant() != pw && pw.Any(char.IsDigit);
+            if (!mixed && pw.Length < 14) return "Das Passwort braucht Groß- und Kleinbuchstaben und eine Zahl (oder mindestens 14 Zeichen).";
+            return null;
+        }
 
         /// <summary>Random start password (no look-alike characters).</summary>
         static string NewPassword()
@@ -381,14 +443,176 @@ namespace RyvenPanel
             return p;
         }
 
+        Panel BuildApi()
+        {
+            var p = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var bNew = Ui.Btn("+ Schlüssel erstellen", Theme.Accent);
+            var bInfo = Ui.Btn("Rechte & IPs anzeigen", Theme.CardHi);
+            var bRev = Ui.Btn("Sperren", Theme.Mix(Theme.Red, Theme.Bg, 0.35)).Tip("Schlüssel sofort widerrufen");
+            var info = Theme.Lbl("Schlüssel gelten nur von den hinterlegten IPs und nie für „team.manage“. Der Klartext wird nur einmal beim Erstellen angezeigt.", Theme.F(8.75f), Theme.Muted, Theme.Bg);
+            info.Margin = new Padding(4, 10, 0, 0);
+            var bar = Ui.Bar(46, bNew, bInfo, bRev, info);
+            apiList = Ui.List(new[] { "Name", "Präfix", "Scopes (Rechte)", "IPs", "Erstellt", "Läuft ab", "Zuletzt benutzt", "Nutzungen", "Status" }, new[] { 120, 90, 260, 140, 110, 110, 130, 80, 100 });
+            var c = new RoundPanel { Dock = DockStyle.Fill, Padding = new Padding(8, 10, 8, 8) };
+            c.Controls.Add(apiList);
+            p.Controls.Add(c);
+            p.Controls.Add(bar);
+            bNew.Click += async (s, e) => await CreateApiKey();
+            Func<object> sel = () => Ui.SelData<object>(apiList);
+            Action show = () =>
+            {
+                var k = sel(); if (k == null) return;
+                MessageBox.Show(FindForm(), "Schlüssel „" + J.S(k, "name") + "“ (" + J.S(k, "prefix") + "…)\r\n\r\nIPs: " + string.Join(", ", J.L(J.Parse(J.S(k, "ips") ?? "[]")).Select(Convert.ToString)) +
+                    "\r\nLetzte IP: " + (J.S(k, "last_ip") ?? "–") + "\r\nNotiz: " + (J.S(k, "note") ?? "") + "\r\n\r\nRechte:\r\n" +
+                    string.Join("\r\n", J.L(J.Parse(J.S(k, "perms") ?? "[]")).Select(Convert.ToString).Select(x => "  • " + PermLabel(x))), "API-Schlüssel", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+            bInfo.Click += (s, e) => show();
+            apiList.DoubleClick += (s, e) => show();
+            bRev.Click += async (s, e) =>
+            {
+                var k = sel(); if (k == null) return;
+                if (J.N(k, "revoked") > 0) { setStatus("Dieser Schlüssel ist schon gesperrt.", Theme.Yellow); return; }
+                if (!Dialogs.Confirm(FindForm(), "Schlüssel sperren", "API-Schlüssel „" + J.S(k, "name") + "“ endgültig sperren? Folgeprojekte mit diesem Schlüssel verlieren sofort den Zugriff.")) return;
+                await Admin("apikey", new Dictionary<string, object> { { "action", "revoke" }, { "name", J.S(k, "name") } }, "Schlüssel gesperrt");
+            };
+            return p;
+        }
+
+        string PermLabel(string key)
+        {
+            foreach (var p in J.L(J.Get(state, "perms"))) { var a = J.L(p).Select(Convert.ToString).ToArray(); if (a.Length > 1 && a[0] == key) return a[1] + " (" + key + ")"; }
+            return key;
+        }
+
+        async Task CreateApiKey()
+        {
+            var perms = apiPerms.Count > 0 ? apiPerms : J.L(J.Get(state, "perms")).Select(x => J.L(x).Select(Convert.ToString).First()).Where(x => x != "team.manage").ToList();
+            using (var d = new DarkForm())
+            {
+                d.Text = "API-Schlüssel erstellen";
+                d.FormBorderStyle = FormBorderStyle.FixedDialog; d.MaximizeBox = d.MinimizeBox = false; d.ShowInTaskbar = false;
+                d.StartPosition = FormStartPosition.CenterParent;
+                d.ClientSize = new Size(500, 640);
+                Func<string, int, Label> cap = (t, yy) => { var l = Theme.Lbl(t, Theme.F(8.25f, FontStyle.Bold), Theme.Muted, Theme.Bg); l.Location = new Point(20, yy); d.Controls.Add(l); return l; };
+                Func<string, int, string, Field> fld = (t, yy, v) => { cap(t, yy); var f = new Field(false) { Location = new Point(20, yy + 20), Size = new Size(460, 40) }; f.Box.Text = v; d.Controls.Add(f); return f; };
+                var fName = fld("NAME (a–z, 0–9, _ -)", 14, "");
+                var fIps = fld("ERLAUBTE IPs (kommagetrennt, öffentlich)", 72, "");
+                var fDays = fld("GÜLTIG FÜR TAGE (0 = unbegrenzt)", 130, "0");
+                var fNote = fld("NOTIZ (optional)", 188, "");
+                cap("RECHTE", 246);
+                var box = new FlowLayoutPanel { Location = new Point(20, 268), Size = new Size(460, 300), FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, BackColor = Theme.Card };
+                var checks = new Dictionary<string, CheckBox>();
+                foreach (var k in perms)
+                {
+                    var cb = new CheckBox { Text = PermLabel(k), UseMnemonic = false, AutoSize = true, ForeColor = Theme.Text, BackColor = Theme.Card, Margin = new Padding(6, 3, 0, 3) };
+                    cb.Tip(k);
+                    checks[k] = cb; box.Controls.Add(cb);
+                }
+                d.Controls.Add(box);
+                var ok = new FlatBtn("Erstellen", Theme.Accent) { Location = new Point(360, 584), Size = new Size(120, 40), DialogResult = DialogResult.OK };
+                var cancel = new FlatBtn("Abbrechen", Theme.CardHi) { Location = new Point(240, 584), Size = new Size(110, 40), DialogResult = DialogResult.Cancel };
+                d.Controls.Add(ok); d.Controls.Add(cancel); d.AcceptButton = ok; d.CancelButton = cancel;
+                if (d.ShowDialog(FindForm()) != DialogResult.OK) return;
+                var name = fName.Box.Text.Trim().ToLowerInvariant();
+                var ps = checks.Where(kv => kv.Value.Checked).Select(kv => kv.Key).ToList();
+                var ips = fIps.Box.Text.Split(new[] { ',', ' ', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).ToList();
+                int days; int.TryParse(fDays.Box.Text.Trim(), out days);
+                if (!Regex.IsMatch(name, "^[a-z0-9_-]{3,32}$")) { setStatus("Name: 3–32 Zeichen, nur a–z, 0–9, _ und -.", Theme.Red); return; }
+                if (ps.Count == 0) { setStatus("Bitte mindestens ein Recht wählen.", Theme.Red); return; }
+                if (ips.Count == 0) { setStatus("Bitte mindestens eine IP angeben.", Theme.Red); return; }
+                var token = await AdminData("apikey", new Dictionary<string, object> { { "action", "create" }, { "name", name }, { "perms", ps }, { "ips", ips }, { "tage", days }, { "note", fNote.Box.Text.Trim() } }, "Schlüssel „" + name + "“ erstellt", "token");
+                if (token == null) return;
+                try { Clipboard.SetText(token); } catch { }
+                MessageBox.Show(FindForm(), "API-Schlüssel „" + name + "“:\r\n\r\n" + token + "\r\n\r\nWurde in die Zwischenablage kopiert. Er wird nur jetzt einmal angezeigt und ist danach nicht mehr abrufbar.",
+                    "API-Schlüssel", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        Panel BuildSessions()
+        {
+            var p = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            var bOne = Ui.Btn("Sitzung beenden", Theme.CardHi);
+            var bUser = Ui.Btn("Alle Sitzungen des Nutzers", Theme.CardHi).Tip("Meldet den Nutzer überall ab");
+            var bAll = Ui.Btn("Alle beenden", Theme.Mix(Theme.Red, Theme.Bg, 0.35)).Tip("Alle angemeldeten Mitglieder abmelden");
+            var bar = Ui.Bar(46, bOne, bUser, bAll);
+            sessList = Ui.List(new[] { "Benutzer", "Rang", "IP", "Angemeldet seit", "Zuletzt aktiv", "Läuft ab" }, new[] { 140, 110, 200, 140, 140, 140 });
+            var c = new RoundPanel { Dock = DockStyle.Fill, Padding = new Padding(8, 10, 8, 8) };
+            c.Controls.Add(sessList);
+            p.Controls.Add(c);
+            p.Controls.Add(bar);
+            bOne.Click += async (s, e) =>
+            {
+                var x = Ui.SelData<object>(sessList); if (x == null) return;
+                await Admin("session", new Dictionary<string, object> { { "action", "kick" }, { "hash", J.S(x, "token_hash") } }, "Sitzung von " + J.S(x, "username") + " beendet");
+            };
+            bUser.Click += async (s, e) =>
+            {
+                var x = Ui.SelData<object>(sessList); if (x == null) return;
+                await Admin("user", new Dictionary<string, object> { { "username", J.S(x, "username") }, { "action", "kick" } }, J.S(x, "username") + " überall abgemeldet");
+            };
+            bAll.Click += async (s, e) =>
+            {
+                if (!Dialogs.Confirm(FindForm(), "Alle abmelden", "Wirklich ALLE Team-Sitzungen beenden? Alle müssen sich neu anmelden.")) return;
+                await Admin("session", new Dictionary<string, object> { { "action", "kickall" } }, "Alle Sitzungen beendet");
+            };
+            return p;
+        }
+
         Panel BuildLog()
         {
             var p = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+            fSearch = new Field(false) { Size = new Size(240, 36), Margin = new Padding(0, 4, 8, 0), Placeholder = "Suche in Aktion, Details, IP" };
+            cWho = new DarkCombo { Width = 150, Margin = new Padding(0, 6, 8, 0) };
+            cRes = new DarkCombo { Width = 120, Margin = new Padding(0, 6, 8, 0) };
+            cSpan = new DarkCombo { Width = 130, Margin = new Padding(0, 6, 8, 0) };
+            cWho.Items.Add("Alle Nutzer"); cWho.SelectedIndex = 0;
+            foreach (var x in new[] { "Alle Ergebnisse", "Nur OK", "Nur Fehler" }) cRes.Items.Add(x);
+            cRes.SelectedIndex = 0;
+            foreach (var x in new[] { "Gesamte Zeit", "Letzte 24 h", "Letzte 7 Tage" }) cSpan.Items.Add(x);
+            cSpan.SelectedIndex = 0;
+            var bGo = Ui.Btn("Suchen", Theme.Accent);
+            var bReset = Ui.Btn("Zurücksetzen", Theme.CardHi);
+            var bar = Ui.Bar(46, fSearch, cWho, cRes, cSpan, bGo, bReset);
             logList = Ui.List(new[] { "Zeit", "Wer", "IP", "Aktion", "Details", "Ergebnis" }, new[] { 130, 120, 120, 170, 300, 110 });
             var c = new RoundPanel { Dock = DockStyle.Fill, Padding = new Padding(8, 10, 8, 8) };
             c.Controls.Add(logList);
             p.Controls.Add(c);
+            p.Controls.Add(bar);
+            Func<Task> go = async () =>
+            {
+                var d = new Dictionary<string, object> { { "q", fSearch.Box.Text.Trim() }, { "limit", 1000 }, { "result", cRes.SelectedIndex == 1 ? "ok" : cRes.SelectedIndex == 2 ? "fehler" : "" } };
+                if (cWho.SelectedIndex > 0) d["who"] = cWho.SelectedItem as string;
+                if (cSpan.SelectedIndex > 0) d["since"] = NowUnix() - (cSpan.SelectedIndex == 1 ? 86400 : 7 * 86400);
+                logFiltered = fSearch.Box.Text.Trim().Length > 0 || cWho.SelectedIndex > 0 || cRes.SelectedIndex > 0 || cSpan.SelectedIndex > 0;
+                var r = await Query("audit", d);
+                if (r == null) return;
+                FillLog(J.L(J.Get(r, "audit")));
+                setStatus(logList.Items.Count + " Einträge" + (logFiltered ? " (gefiltert)" : "") + ".", Theme.Muted);
+            };
+            bGo.Click += async (s, e) => await go();
+            fSearch.Box.KeyDown += async (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; await go(); } };
+            bReset.Click += (s, e) =>
+            {
+                fSearch.Box.Text = ""; cWho.SelectedIndex = 0; cRes.SelectedIndex = 0; cSpan.SelectedIndex = 0;
+                logFiltered = false;
+                FillLog(J.L(J.Get(state, "audit")));
+            };
             return p;
+        }
+
+        void FillLog(IEnumerable<object> entries)
+        {
+            var lrows = new List<ListViewItem>();
+            foreach (var l in entries)
+            {
+                var res = J.S(l, "result") ?? "";
+                bool bad = res != "ok";
+                var row = Ui.Row(new RowTag { Key = J.S(l, "id"), Dot = bad ? Theme.Red : Theme.Green, Data = bad },
+                    When(J.N(l, "time")), J.S(l, "name"), J.S(l, "ip"), J.S(l, "action"), J.S(l, "detail"), res);
+                if (bad) row.SubItems[5].ForeColor = Theme.Red;
+                lrows.Add(row);
+            }
+            Ui.Fill(logList, lrows);
         }
 
         Panel BuildSettings()
@@ -398,7 +622,7 @@ namespace RyvenPanel
             int y = 16;
             Func<string, Label> cap = t => { var l = Theme.Lbl(t, Theme.F(8.25f, FontStyle.Bold), Theme.Muted, Color.Transparent); l.Location = new Point(22, y); card.Controls.Add(l); y += 22; return l; };
             cap("ADRESSE FÜR DEIN TEAM (in der App unter „Team-Server“ eintragen)");
-            addrLbl = Theme.Lbl("", Theme.Mono, Theme.Cyan, Color.Transparent);
+            addrLbl = Theme.Lbl("", Theme.Mono, Theme.SoftGreen, Color.Transparent);
             addrLbl.Location = new Point(22, y); card.Controls.Add(addrLbl);
             var bCopy = new FlatBtn("Kopieren", Theme.CardHi) { Location = new Point(560, y - 6), Size = new Size(100, 30), Font = Theme.F(8.5f, FontStyle.Bold) };
             bCopy.Click += (s, e) => { try { Clipboard.SetText(addrLbl.Text); } catch { } };
@@ -409,11 +633,42 @@ namespace RyvenPanel
             var bBlk = new FlatBtn("Speichern", Theme.Accent) { Location = new Point(462, y), Size = new Size(110, 34) };
             card.Controls.Add(blocked); card.Controls.Add(bBlk);
             y += 216;
+            cap("2FA-PFLICHT FÜR RÄNGE (Komma-getrennt, z. B. owner, admin) – Mitglieder dieser Ränge müssen 2FA einrichten");
+            tfaRanks = new TextBox { Location = new Point(22, y), Size = new Size(430, 26), BackColor = Theme.Input, ForeColor = Theme.Text, BorderStyle = BorderStyle.None, Font = Theme.F(9.5f) };
+            var bTfaSave = new FlatBtn("Speichern", Theme.Accent) { Location = new Point(462, y - 4), Size = new Size(110, 34) };
+            card.Controls.Add(tfaRanks); card.Controls.Add(bTfaSave);
+            bTfaSave.Click += async (s, e) =>
+            {
+                var rs = tfaRanks.Text.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim().ToLowerInvariant()).Distinct().ToArray();
+                await Admin("config", new Dictionary<string, object> { { "tfa_required_ranks", rs } }, rs.Length == 0 ? "2FA-Pflicht aufgehoben" : "2FA-Pflicht für: " + string.Join(", ", rs));
+            };
+            y += 50;
             cap("DIENST");
             var bUpd = new FlatBtn("Aktualisieren / neu installieren", Theme.CardHi) { Location = new Point(22, y), Size = new Size(240, 34) };
             var bRestart = new FlatBtn("Neu starten", Theme.CardHi) { Location = new Point(270, y), Size = new Size(120, 34) };
             var bLog = new FlatBtn("Dienst-Log", Theme.CardHi) { Location = new Point(398, y), Size = new Size(120, 34) };
             card.Controls.AddRange(new Control[] { bUpd, bRestart, bLog });
+            y += 56;
+            cap("DIESES GERÄT (Owner-Gerätebindung)");
+            var idLbl = Theme.Lbl("Geräte-ID: " + HardwareId.Short, Theme.Mono, Theme.SoftGreen, Color.Transparent);
+            idLbl.Location = new Point(22, y); card.Controls.Add(idLbl);
+            var bId = new FlatBtn("Kopieren", Theme.CardHi) { Location = new Point(270, y - 6), Size = new Size(100, 30), Font = Theme.F(8.5f, FontStyle.Bold) };
+            bId.Click += (s, e) => { try { Clipboard.SetText(HardwareId.Compute()); } catch { } };
+            card.Controls.Add(bId);
+            y += 56;
+            cap("NOTFALL-TUNNEL (SSH über Cloudflare Access)");
+            var nfLbl = Theme.Lbl(Ssh.NotfallInfo(), Theme.Mono, Theme.SoftGreen, Color.Transparent);
+            nfLbl.Location = new Point(22, y); card.Controls.Add(nfLbl);
+            var bNf = new FlatBtn("Notfall-Tunnel testen", Theme.CardHi) { Location = new Point(22, y + 28), Size = new Size(200, 34) };
+            bNf.Click += async (s, e) =>
+            {
+                var r = await getSsh().TestNotfall();
+                nfLbl.Text = Ssh.NotfallInfo();
+                var ok = r.Ok && (r.Out ?? "").Trim() == "ok";
+                setStatus(ok ? "Notfall-Tunnel getestet: ok" : "Notfall-Tunnel Test fehlgeschlagen: " + r.Message, ok ? Theme.Green : Theme.Red);
+            };
+            card.Controls.Add(bNf);
+            y += 40;
             card.Height = y + 60;
             p.Controls.Add(card);
 
@@ -475,6 +730,7 @@ namespace RyvenPanel
                 foreach (var t in tabs) t.Visible = true;
                 port = (int)Math.Max(1, J.N(state, "port"));
                 Render(active);
+                await LoadApi();
             }
             finally { busy = false; progress.Set(-1); }
             if (state != null && !updateTried && await EnsureCurrent(state)) await Reload(false);
@@ -495,6 +751,7 @@ namespace RyvenPanel
             if (PendingChanged != null) PendingChanged(requests.Count);
             addrLbl.Text = "https://" + host + ":" + port + (string.IsNullOrEmpty(thumb) ? "" : "      SHA-1 " + thumb);
             if (!blocked.Focused) blocked.Text = string.Join("\r\n", J.L(J.Get(state, "blocked_commands")).Select(Convert.ToString));
+            if (!tfaRanks.Focused) tfaRanks.Text = string.Join(", ", J.L(J.Get(state, "tfa_required_ranks")).Select(Convert.ToString));
 
             // ranks
             roles = new Dictionary<string, List<string>>();
@@ -514,7 +771,8 @@ namespace RyvenPanel
             }
             Ui.Fill(rankList, rows);
             if (permChecks.Count == 0) BuildPermChecks();
-            if (selRank != null) ShowRank(selRank);
+            // Ungespeicherte Änderungen an den Kästchen nicht überschreiben (das Neuladen läuft alle 20 s im Hintergrund)
+            if (selRank != null && !permsDirty) ShowRank(selRank);
             if (!string.IsNullOrEmpty(J.S(state, "groups_error"))) setStatus("LuckPerms: " + J.S(state, "groups_error"), Theme.Yellow);
 
             // accounts
@@ -529,8 +787,9 @@ namespace RyvenPanel
                 var src = !string.IsNullOrEmpty(J.S(a, "mc_name")) ? "Spieler " + J.S(a, "mc_name") : "fester Rang " + J.S(a, "role");
                 var stat = frozen ? "gesperrt" : locked ? "vorübergehend gesperrt" : on ? "angemeldet" : fresh ? "noch nie angemeldet" : J.N(a, "must_change") > 0 ? "Passwort zurückgesetzt" : "abgemeldet";
                 var row = Ui.Row(new RowTag { Key = u, Data = a, Dot = frozen || locked ? Theme.Red : on ? Theme.Green : Theme.Muted },
-                    u, src, string.IsNullOrEmpty(J.S(a, "rank")) ? "–" : J.S(a, "rank"), ips.Length > 0 ? ips : "(beim ersten Login)", When(J.N(a, "last_login")), stat);
+                    u, src, string.IsNullOrEmpty(J.S(a, "rank")) ? "–" : J.S(a, "rank"), ips.Length > 0 ? ips : "(beim ersten Login)", When(J.N(a, "last_login")), stat, J.N(a, "totp_on") > 0 ? "aktiv" : "aus");
                 row.SubItems[5].ForeColor = frozen || locked ? Theme.Red : on ? Theme.Green : Theme.Muted;
+                row.SubItems[6].ForeColor = J.N(a, "totp_on") > 0 ? Theme.Green : Theme.Muted;
                 arows.Add(row);
             }
             Ui.Fill(accList, arows);
@@ -549,33 +808,136 @@ namespace RyvenPanel
             }
             Ui.Fill(reqList, rrows);
 
-            // audit
-            var lrows = new List<ListViewItem>();
-            foreach (var l in J.L(J.Get(state, "audit")))
+            // audit (eine gefilterte Ansicht nicht beim Neuladen überschreiben)
+            if (!logFiltered) FillLog(J.L(J.Get(state, "audit")));
+            var whoNames = accounts.Select(a => J.S(a, "username")).Concat(new[] { "Owner" }).Distinct().OrderBy(x => x).ToList();
+            if (cWho.Items.Count - 1 != whoNames.Count)
             {
-                var res = J.S(l, "result") ?? "";
-                bool bad = res != "ok";
-                var row = Ui.Row(new RowTag { Key = J.S(l, "id"), Dot = bad ? Theme.Red : Theme.Green, Data = bad },
-                    When(J.N(l, "time")), J.S(l, "name"), J.S(l, "ip"), J.S(l, "action"), J.S(l, "detail"), res);
-                if (bad) row.SubItems[5].ForeColor = Theme.Red;
-                lrows.Add(row);
+                var keep = cWho.SelectedIndex > 0 ? cWho.SelectedItem as string : null;
+                cWho.Items.Clear(); cWho.Items.Add("Alle Nutzer");
+                foreach (var w in whoNames) cWho.Items.Add(w);
+                cWho.SelectedItem = keep ?? "Alle Nutzer";
             }
-            Ui.Fill(logList, lrows);
+
+            // sessions
+            var srows = new List<ListViewItem>();
+            foreach (var x in sessions)
+                srows.Add(Ui.Row(new RowTag { Key = J.S(x, "token_hash"), Data = x, Dot = Theme.Green },
+                    J.S(x, "username"), string.IsNullOrEmpty(J.S(x, "rank")) ? "–" : J.S(x, "rank"), J.S(x, "ip"), When(J.N(x, "created")), When(J.N(x, "last_seen")), When(J.N(x, "expires"))));
+            Ui.Fill(sessList, srows);
+            tabs[4].Text = sessions.Count > 0 ? "Sitzungen (" + sessions.Count + ")" : "Sitzungen";
+            tabs[4].Width = Theme.Measure(tabs[4].Text, tabs[4].Font).Width + 30;
+        }
+
+        void RenderApi()
+        {
+            var rows = new List<ListViewItem>();
+            var now = NowUnix();
+            foreach (var k in apiKeys)
+            {
+                bool rev = J.N(k, "revoked") > 0, exp = J.N(k, "expires") > 0 && J.N(k, "expires") < now;
+                var ips = string.Join(", ", J.L(J.Parse(J.S(k, "ips") ?? "[]")).Select(Convert.ToString));
+                var row = Ui.Row(new RowTag { Key = J.S(k, "name"), Data = k, Dot = rev || exp ? Theme.Red : Theme.Green },
+                    J.S(k, "name"), (J.S(k, "prefix") ?? "") + "…", string.Join(", ", J.L(J.Parse(J.S(k, "perms") ?? "[]")).Select(Convert.ToString)), ips,
+                    When(J.N(k, "created")), J.N(k, "expires") > 0 ? When(J.N(k, "expires")) : "nie", When(J.N(k, "last_used")), ((int)J.N(k, "uses")).ToString(),
+                    rev ? "gesperrt" : exp ? "abgelaufen" : "aktiv");
+                row.SubItems[8].ForeColor = rev || exp ? Theme.Red : Theme.Green;
+                rows.Add(row);
+            }
+            Ui.Fill(apiList, rows);
+        }
+
+        /// <summary>Read-only admin query (no state change, no reload). Returns null and shows the error on failure.</summary>
+        async Task<Dictionary<string, object>> Query(string cmd, object data)
+        {
+            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(J.ToJson(data ?? new Dictionary<string, object>())));
+            var r = await getSsh().Run("printf '%s' '" + b64 + "' | " + Py + " admin " + cmd + " -", 45000);
+            var d = Parse(r.Out);
+            if (!r.Ok || d == null || !J.B(d, "ok")) { setStatus("Fehler: " + (J.S(d, "error") ?? r.Message), Theme.Red); return null; }
+            return d;
+        }
+
+        async Task LoadApi()
+        {
+            var d = await Query("apikeys", null);
+            if (d == null) return;
+            apiKeys = J.L(J.Get(d, "keys")).ToList();
+            apiPerms = J.L(J.Get(d, "api_perms")).Select(Convert.ToString).ToList();
+            RenderApi();
+        }
+
+        /// <summary>Like Admin, but returns one string field of the reply (e.g. a freshly created API key) or null on failure.</summary>
+        async Task<string> AdminData(string cmd, object data, string okText, string field)
+        {
+            for (int i = 0; busy && i < 100; i++) await Task.Delay(100);
+            if (busy) { setStatus("Fehler: Das Panel ist noch beschäftigt – bitte gleich noch einmal versuchen.", Theme.Red); return null; }
+            busy = true;
+            progress.Set(double.NaN);
+            string val;
+            try
+            {
+                var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(J.ToJson(data)));
+                var r = await getSsh().Run("printf '%s' '" + b64 + "' | " + Py + " admin " + cmd + " -", 45000);
+                var d = Parse(r.Out);
+                if (!r.Ok || d == null || !J.B(d, "ok")) { setStatus("Fehler: " + (J.S(d, "error") ?? (string.IsNullOrWhiteSpace(r.Message) ? "Keine Antwort vom Server." : r.Message)), Theme.Red); return null; }
+                setStatus(okText, Theme.Green);
+                val = J.S(d, field);
+            }
+            finally { busy = false; progress.Set(-1); }
+            await Reload(false);
+            return val;
         }
 
         int PermCount { get { return J.L(J.Get(state, "perms")).Count(); } }
+
+        static string GroupOf(string key)
+        {
+            var p = key.Split('.')[0];
+            switch (p)
+            {
+                case "servers": case "server": return "Server";
+                case "console": return "Konsole";
+                case "files": return "Dateien";
+                case "economy": return "Wirtschaft";
+                case "moderation": return "Moderation";
+                case "datenschutz": return "Datenschutz";
+                case "netzwerk": return "Netzwerk";
+                case "users": return "Nutzer & Ränge";
+                case "team": return "Team";
+                case "ki": return "KI";
+                default: return p;
+            }
+        }
 
         void BuildPermChecks()
         {
             permBox.Controls.Clear();
             permChecks.Clear();
+            string lastGrp = null;
             foreach (var p in J.L(J.Get(state, "perms")))
             {
                 var arr = J.L(p).Select(Convert.ToString).ToArray();
                 if (arr.Length < 2) continue;
-                var cb = new CheckBox { Text = arr[1], UseMnemonic = false, AutoSize = true, ForeColor = Theme.Text, BackColor = Theme.Card, Font = Theme.F(10f), Margin = new Padding(0, 4, 0, 6), Enabled = false };
+                var grp = GroupOf(arr[0]);
+                if (grp != lastGrp)
+                {
+                    lastGrp = grp;
+                    var h = Theme.Lbl(grp.ToUpperInvariant() + "   (anklicken: Gruppe an/aus)", Theme.F(8.25f, FontStyle.Bold), Theme.Muted, Theme.Card);
+                    h.Margin = new Padding(0, 10, 0, 2); h.Cursor = Cursors.Hand;
+                    var g = grp;
+                    h.Click += (s, e) =>
+                    {
+                        var m = permChecks.Where(kv => GroupOf(kv.Key) == g && kv.Value.Enabled).Select(kv => kv.Value).ToList();
+                        bool on = m.Any(c => !c.Checked);
+                        foreach (var c in m) c.Checked = on;
+                    };
+                    permBox.Controls.Add(h);
+                    DarkForm.ScaleLate(h);
+                }
+                var cb =new CheckBox { Text = arr[1], UseMnemonic = false, AutoSize = true, ForeColor = Theme.Text, BackColor = Theme.Card, Font = Theme.F(10f), Margin = new Padding(0, 4, 0, 6), Enabled = false };
                 if (arr[0] == "console.command.unrestricted" || arr[0] == "files.edit") cb.ForeColor = Theme.Mix(Theme.Text, Theme.Red, 0.35);
                 cb.Tip(arr[0]);
+                cb.CheckedChanged += (s, e) => { if (!settingChecks) permsDirty = true; };
                 permChecks[arr[0]] = cb;
                 permBox.Controls.Add(cb);
                 DarkForm.ScaleLate(cb);
@@ -588,7 +950,10 @@ namespace RyvenPanel
             permTitle.Text = "Panel-Rechte für Rang „" + rank + "“";
             List<string> ps;
             roles.TryGetValue(rank, out ps);
-            foreach (var kv in permChecks) { kv.Value.Enabled = true; kv.Value.Checked = ps != null && ps.Contains(kv.Key); }
+            settingChecks = true;
+            try { foreach (var kv in permChecks) { kv.Value.Enabled = true; kv.Value.Checked = ps != null && ps.Contains(kv.Key); } }
+            finally { settingChecks = false; }
+            permsDirty = false;
         }
 
         static string When(double unix)
@@ -599,9 +964,11 @@ namespace RyvenPanel
         }
 
         /// <summary>Runs an owner command on the server. The payload goes through stdin (printf is a shell builtin), so passwords never show up in the process list.</summary>
-        async Task<bool> Admin(string cmd, object data, string okText)
+        async Task<bool> Admin(string cmd, object data, string okText, bool fehlerAlsDialog = false)
         {
-            if (busy) return false;
+            // Läuft gerade ein Neuladen im Hintergrund, kurz warten statt die Aktion stillschweigend zu verwerfen
+            for (int i = 0; busy && i < 100; i++) await Task.Delay(100);
+            if (busy) { setStatus("Fehler: Das Panel ist noch beschäftigt – bitte gleich noch einmal versuchen.", Theme.Red); return false; }
             busy = true;
             progress.Set(double.NaN);
             bool ok = false;
@@ -610,7 +977,13 @@ namespace RyvenPanel
                 var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(J.ToJson(data)));
                 var r = await getSsh().Run("printf '%s' '" + b64 + "' | " + Py + " admin " + cmd + " -", 45000);
                 var d = Parse(r.Out);
-                if (!r.Ok || d == null || !J.B(d, "ok")) { setStatus("Fehler: " + (J.S(d, "error") ?? r.Message), Theme.Red); return false; }
+                if (!r.Ok || d == null || !J.B(d, "ok"))
+                {
+                    var fehler = J.S(d, "error") ?? (string.IsNullOrWhiteSpace(r.Message) ? "Keine Antwort vom Server." : r.Message);
+                    setStatus("Fehler: " + fehler, Theme.Red);
+                    if (fehlerAlsDialog) MessageBox.Show(FindForm(), fehler, "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return false;
+                }
                 setStatus(okText, Theme.Green);
                 ok = true;
             }

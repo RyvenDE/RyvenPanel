@@ -25,10 +25,11 @@ namespace RyvenSetup
     static class Program
     {
         public const string AppName = "RyvenPanel";
+        public const string ExeName = "PXMX";
         public const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\RyvenPanel";
 
         public static string InstallDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", AppName); } }
-        public static string ExePath { get { return Path.Combine(InstallDir, AppName + ".exe"); } }
+        public static string ExePath { get { return Path.Combine(InstallDir, ExeName + ".exe"); } }
         public static string StartMenuLink { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName + ".lnk"); } }
         public static string DesktopLink { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"); } }
         public static string SettingsDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppName); } }
@@ -82,9 +83,16 @@ namespace RyvenSetup
         /// <summary>Ends running panels from the install folder (asks first unless silent).</summary>
         public static bool CloseRunning(bool silent)
         {
-            var running = Process.GetProcessesByName(AppName).Where(p =>
+            var exePath = Path.GetFullPath(ExePath);
+            var legacyExePath = Path.GetFullPath(Path.Combine(InstallDir, AppName + ".exe"));
+            var running = Process.GetProcessesByName(ExeName).Concat(Process.GetProcessesByName(AppName)).Where(p =>
             {
-                try { return string.Equals(Path.GetFullPath(p.MainModule.FileName), Path.GetFullPath(ExePath), StringComparison.OrdinalIgnoreCase); }
+                try
+                {
+                    var path = Path.GetFullPath(p.MainModule.FileName);
+                    return string.Equals(path, exePath, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(path, legacyExePath, StringComparison.OrdinalIgnoreCase);
+                }
                 catch { return false; }
             }).ToList();
             if (running.Count == 0) return true;
@@ -105,11 +113,12 @@ namespace RyvenSetup
             using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("RyvenPanel.exe"))
             using (var ms = new MemoryStream()) { s.CopyTo(ms); app = ms.ToArray(); }
 
-            // a running/locked exe can still be renamed – the panel deletes leftovers on its next start
-            if (File.Exists(ExePath))
+            // A running/locked exe can still be renamed – the panel deletes leftovers on its next start.
+            foreach (var oldPath in new[] { ExePath, Path.Combine(InstallDir, AppName + ".exe") })
             {
-                try { File.Delete(ExePath); }
-                catch { File.Move(ExePath, Path.Combine(InstallDir, AppName + "." + DateTime.Now.Ticks + ".old")); }
+                if (!File.Exists(oldPath)) continue;
+                try { File.Delete(oldPath); }
+                catch { File.Move(oldPath, Path.Combine(InstallDir, AppName + "." + DateTime.Now.Ticks + ".old")); }
             }
             File.WriteAllBytes(ExePath, app);
 

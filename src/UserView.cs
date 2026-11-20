@@ -299,7 +299,7 @@ namespace RyvenPanel
             var eco = new CardGrid { Dock = DockStyle.Top, MinCardWidth = 180, CardHeight = 146, BackColor = Theme.Card };
             eMoney = new StatCard("Money") { BarColor = Theme.Green };
             eCoins = new StatCard("Coins") { BarColor = Theme.Yellow };
-            eMob = new StatCard("MobCoins") { BarColor = Theme.Pink };
+            eMob = new StatCard("MobCoins") { BarColor = Theme.Mint };
             foreach (var xx in new[] { new { C = eMoney, K = "money", T = "Essentials-Geld – gilt nur auf dem oben gewählten Server" },
                                         new { C = eCoins, K = "coins", T = "PlayerPoints – global auf allen Servern" },
                                         new { C = eMob, K = "mob", T = "DeluxeMobCoins – gilt nur auf dem oben gewählten Server" } })
@@ -814,7 +814,7 @@ namespace RyvenPanel
 
             eMoney.Set(p.Money.HasValue ? currency + Ui.Num(p.Money.Value) : "–", "Essentials · " + (Cur != null ? Cur.Name : ""), Theme.Green);
             eCoins.Set(p.Coins.HasValue ? Ui.Num(p.Coins.Value) : "–", "PlayerPoints · global", Theme.Yellow);
-            eMob.Set(p.MobCoins.HasValue ? Ui.Num(p.MobCoins.Value) : "–", "DeluxeMobCoins · " + (Cur != null ? Cur.Name : ""), Theme.Pink);
+            eMob.Set(p.MobCoins.HasValue ? Ui.Num(p.MobCoins.Value) : "–", "DeluxeMobCoins · " + (Cur != null ? Cur.Name : ""), Theme.Mint);
 
             var rows = new List<ListViewItem>();
             foreach (var m in p.Groups.OrderByDescending(x => groups.ContainsKey(x.Group) ? groups[x.Group].Weight : 0))

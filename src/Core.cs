@@ -98,8 +98,33 @@ namespace RyvenPanel
         public static string PinnedThumb, GatewayThumb;
 
         public string BaseUrl;
+        /// <summary>Configured address for display (BaseUrl may be a local SSH forward).</summary>
+        public string DisplayUrl;
         public string Token;
         public event Action Unauthorized;
+
+        public enum ConnState { Online, Disrupted, SessionExpired }
+        static ConnState connState = ConnState.Online;
+        public static ConnState State { get { return connState; } }
+        /// <summary>Raised (from any thread) when the shared gateway connection state changes.</summary>
+        public static event Action<ConnState> StateChanged;
+        public static string StateText(ConnState c)
+        {
+            return c == ConnState.Online ? "Online" : c == ConnState.Disrupted ? "Verbindung gestört" : "Sitzung abgelaufen";
+        }
+        static void SetState(ConnState c)
+        {
+            if (connState == c) return;
+            connState = c;
+            var h = StateChanged;
+            if (h != null) { try { h(c); } catch { } }
+        }
+        /// <summary>True for network failures (Status 0 except certificate problems) and gateway 502/503/504.</summary>
+        public static bool IsTransient(ApiResult r)
+        {
+            if (r.Status == 0) return (r.Raw ?? "").IndexOf("Zertifikat", StringComparison.Ordinal) < 0;
+            return r.Status == 502 || r.Status == 503 || r.Status == 504;
+        }
 
         public Api(string baseUrl, string token)
         {
@@ -150,6 +175,21 @@ namespace RyvenPanel
         }
 
         public async Task<ApiResult> SendRaw(string method, string path, byte[] bytes, string contentType, Dictionary<string, string> headers, int timeoutMs)
+        {
+            var r = await SendOnce(method, path, bytes, contentType, headers, timeoutMs);
+            // idempotent reads: one retry after a short backoff on network errors / gateway restarts
+            if (method == "GET" && IsTransient(r))
+            {
+                await Task.Delay(700);
+                r = await SendOnce(method, path, bytes, contentType, headers, timeoutMs);
+            }
+            if (IsTransient(r)) SetState(ConnState.Disrupted);
+            else if (r.Status == 401) SetState(ConnState.SessionExpired);
+            else SetState(ConnState.Online);
+            return r;
+        }
+
+        async Task<ApiResult> SendOnce(string method, string path, byte[] bytes, string contentType, Dictionary<string, string> headers, int timeoutMs)
         {
             HttpWebRequest req;
             try
@@ -209,7 +249,7 @@ namespace RyvenPanel
                     text = await sr.ReadToEndAsync();
                 var r = new ApiResult { Status = (int)resp.StatusCode, Raw = text };
                 try { r.Json = J.D(J.Parse(text)); } catch { }
-                if ((r.Status == 401 || r.Status == 403) && J.S(r.Json, "error") == "ACCESS_DENIED" && Unauthorized != null)
+                if ((r.Status == 401 || (r.Status == 403 && J.S(r.Json, "error") == "ACCESS_DENIED")) && Unauthorized != null)
                     Unauthorized();
                 return r;
             }

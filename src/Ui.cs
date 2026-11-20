@@ -21,9 +21,9 @@ namespace RyvenPanel
         public static readonly Color Text = Hex("#eceef4");
         public static readonly Color Text2 = Hex("#c3c8d4");
         public static readonly Color Muted = Hex("#878da0");
-        public static readonly Color Accent = Hex("#8b6cff");
-        public static readonly Color Cyan = Hex("#55e0ff");
-        public static readonly Color Pink = Hex("#d966ff");
+        public static readonly Color Accent = Hex("#238552");
+        public static readonly Color SoftGreen = Hex("#83dda2");
+        public static readonly Color Mint = Hex("#b2e8c2");
         public static readonly Color Green = Hex("#3ddc84");
         public static readonly Color Red = Hex("#ff5c6c");
         public static readonly Color DarkRed = Hex("#a8323e");
@@ -113,7 +113,7 @@ namespace RyvenPanel
             {
                 var rr = new Rectangle(r.X - i + 1, r.Y - i + 3, r.Width + 2 * i - 2, r.Height + 2 * i - 2);
                 using (var p = RoundRect(rr, radius + i))
-                using (var b = new SolidBrush(Color.FromArgb(Math.Max(2, 26 / i), 0, 0, 0)))
+                using (var b = new SolidBrush(Color.FromArgb(Math.Max(2, 34 / i), 0, 0, 0)))
                     g.FillPath(b, p);
             }
         }
@@ -252,7 +252,7 @@ namespace RyvenPanel
     {
         public Color Fill = Theme.Card;
         public Color BorderColor = Color.Empty;
-        public int Radius = 14;
+        public int Radius = 16;
         public bool Elevated = true;
         public bool Flat;
 
@@ -278,16 +278,16 @@ namespace RyvenPanel
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = CardRect;
             if (r.Width <= 2 || r.Height <= 2) return;
-            if (Elevated) Theme.Shadow(g, r, Radius, 4);
+            if (Elevated) Theme.Shadow(g, r, Radius, 7);
             using (var p = Theme.RoundRect(r, Radius))
             {
-                using (var b = new LinearGradientBrush(new Rectangle(r.X, r.Y - 1, r.Width, r.Height + 2), Flat ? Fill : Theme.Mix(Fill, Color.White, 0.035), Fill, 90f))
+                using (var b = new LinearGradientBrush(new Rectangle(r.X, r.Y - 1, r.Width, r.Height + 2), Flat ? Fill : Theme.Mix(Fill, Color.White, 0.05), Fill, 90f))
                     g.FillPath(b, p);
-                var bc = BorderColor != Color.Empty ? BorderColor : Theme.Alpha(Color.White, 14);
+                var bc = BorderColor != Color.Empty ? BorderColor : Theme.Alpha(Color.White, 18);
                 using (var pen = new Pen(bc)) g.DrawPath(pen, p);
             }
             using (var hl = Theme.RoundRect(new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, r.Height - 2), Radius - 1))
-            using (var pen = new Pen(Theme.Alpha(Color.White, 8)))
+            using (var pen = new Pen(Theme.Alpha(Color.White, 12)))
             {
                 g.SetClip(new Rectangle(r.X, r.Y, r.Width, Radius + 2));
                 g.DrawPath(pen, hl);
@@ -419,7 +419,7 @@ namespace RyvenPanel
             {
                 float w = (float)((Width - 24) * line);
                 var r = new RectangleF((Width - w) / 2f, Height - 3, Math.Max(1, w), 3);
-                using (var b = new LinearGradientBrush(new RectangleF(r.X - 1, r.Y, r.Width + 2, r.Height), Theme.Cyan, Theme.Pink, 0f))
+                using (var b = new LinearGradientBrush(new RectangleF(r.X - 1, r.Y, r.Width + 2, r.Height), Theme.SoftGreen, Theme.Mint, 0f))
                 using (var p = Theme.RoundRect(r, 1.5f))
                     g.FillPath(b, p);
                 using (var b = new SolidBrush(Theme.Alpha(Theme.Accent, (int)(40 * line))))
@@ -454,9 +454,9 @@ namespace RyvenPanel
             g.Clear(Parent != null ? Parent.BackColor : Theme.Bg);
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             var sz = g.MeasureString(Text, Font);
-            using (var glow = new SolidBrush(Theme.Alpha(Theme.Accent, 40)))
+            using (var glow = new SolidBrush(Theme.Alpha(Theme.Green, 38)))
                 g.DrawString(Text, Font, glow, 1, 2);
-            using (var b = new LinearGradientBrush(new RectangleF(0, 0, Math.Max(1, sz.Width), Math.Max(1, sz.Height)), Theme.Cyan, Theme.Pink, 0f))
+            using (var b = new LinearGradientBrush(new RectangleF(0, 0, Math.Max(1, sz.Width), Math.Max(1, sz.Height)), Theme.Mix(Theme.Green, Color.White, 0.62), Theme.Green, 0f))
                 g.DrawString(Text, Font, b, 0, 0);
         }
     }
@@ -598,7 +598,7 @@ namespace RyvenPanel
     {
         public string Title = "";
         public string Unit = "";
-        public Color LineColor = Theme.Cyan;
+        public Color LineColor = Theme.SoftGreen;
         public double? FixedMax;
         double?[] values = new double?[0];
         double?[] values2;
@@ -812,7 +812,7 @@ namespace RyvenPanel
             if (double.IsNaN(value)) { w = Width * 0.3f; x = (float)(phase * (Width + w)) - w; }
             else { w = (float)(Width * Math.Max(0, Math.Min(1, value))); x = 0; }
             if (w < 1) return;
-            using (var b = new LinearGradientBrush(new RectangleF(x - 1, 0, w + 2, Height), Theme.Cyan, Theme.Pink, 0f))
+            using (var b = new LinearGradientBrush(new RectangleF(x - 1, 0, w + 2, Height), Theme.SoftGreen, Theme.Mint, 0f))
                 g.FillRectangle(b, x, 0, w, Height);
         }
     }

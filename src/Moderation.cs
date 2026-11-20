@@ -52,8 +52,7 @@ namespace RyvenPanel
             if (!args.ContainsKey("actor")) args["actor"] = Actor;
             var sb = new StringBuilder();
             if (!installed)
-                sb.Append("mkdir -p /opt/ryvenpanel && printf '%s\\n' ").Append(Ssh.B64(TeamView.ModSource()))
-                  .Append(" > /opt/ryvenpanel/mod.py.tmp && mv /opt/ryvenpanel/mod.py.tmp /opt/ryvenpanel/mod.py || exit 9\n");
+                sb.Append(Ssh.InstallIfNewer("/opt/ryvenpanel/mod.py", TeamView.ModSource()));
             sb.Append("python3 /opt/ryvenpanel/mod.py ").Append(cmd).Append(' ')
               .Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(J.ToJson(args))));
             var res = await getSsh().Run(sb.ToString(), 60000);
@@ -92,8 +91,8 @@ namespace RyvenPanel
             {
                 case "ban": return Theme.Red;
                 case "mute": return Theme.Yellow;
-                case "kick": return Theme.Pink;
-                case "warn": return Theme.Cyan;
+                case "kick": return Theme.Mint;
+                case "warn": return Theme.SoftGreen;
                 default: return Theme.Muted;
             }
         }
@@ -360,9 +359,9 @@ namespace RyvenPanel
 
             var cards = new CardGrid { Dock = DockStyle.Top, MinCardWidth = 180, CardHeight = 110, Gap = 14 };
             kOpen = new KpiCard(Icons.Console, "Offene Reports", Theme.Red);
-            kBans = new KpiCard(Icons.Block, "Aktive Banns", Theme.Pink);
+            kBans = new KpiCard(Icons.Block, "Aktive Banns", Theme.Mint);
             kMutes = new KpiCard(Icons.Lock, "Aktive Mutes", Theme.Yellow);
-            kLinks = new KpiCard(Icons.People, "Discord verknüpft", Theme.Cyan);
+            kLinks = new KpiCard(Icons.People, "Discord verknüpft", Theme.SoftGreen);
             cards.Controls.AddRange(new Control[] { kOpen, kBans, kMutes, kLinks });
 
             progress = new ProgressLine { Dock = DockStyle.Top, BackColor = Theme.Bg };

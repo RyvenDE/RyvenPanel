@@ -133,8 +133,7 @@ namespace RyvenPanel
             }
             var sb = new StringBuilder();
             if (!installed)
-                sb.Append("mkdir -p /opt/ryvenpanel && printf '%s\\n' ").Append(Ssh.B64(ScriptSource()))
-                  .Append(" > /opt/ryvenpanel/eco.py.tmp && mv /opt/ryvenpanel/eco.py.tmp /opt/ryvenpanel/eco.py || exit 9\n");
+                sb.Append(Ssh.InstallIfNewer("/opt/ryvenpanel/eco.py", ScriptSource()));
             if (!args.ContainsKey("actor")) args["actor"] = "Owner (Panel)";
             sb.Append("python3 /opt/ryvenpanel/eco.py ").Append(cmd).Append(' ')
               .Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(J.ToJson(args))));
@@ -262,9 +261,9 @@ namespace RyvenPanel
             cIn = new KpiCard(Icons.Add, "Geld erzeugt", Theme.Green);
             cOut = new KpiCard(Icons.Block, "Geld vernichtet", Theme.Red);
             cNet = new KpiCard(Icons.Chart, "Netto (Inflation)", Theme.Yellow);
-            cShop = new KpiCard(Icons.Package, "Shop: Verkauf / Kauf", Theme.Pink);
+            cShop = new KpiCard(Icons.Package, "Shop: Verkauf / Kauf", Theme.Mint);
             cCrates = new KpiCard(Icons.Key, "Geld aus Crates", Theme.Accent);
-            cTax = new KpiCard(Icons.Coins, "Verkaufssteuer", Theme.Cyan);
+            cTax = new KpiCard(Icons.Coins, "Verkaufssteuer", Theme.SoftGreen);
             cards.Controls.AddRange(new Control[] { cIn, cOut, cNet, cShop, cCrates, cTax });
 
             chFlow = new LineChart { Title = "Geld rein / raus", LineColor = Theme.Green, Line2Color = Theme.Red, Compact = true, Name1 = "Erzeugt", Name2 = "Vernichtet" };
@@ -298,7 +297,7 @@ namespace RyvenPanel
         Panel BuildShop()
         {
             var page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
-            chShop = new LineChart { Title = "Shop: Spieler verkaufen / kaufen", LineColor = Theme.Green, Line2Color = Theme.Pink, Compact = true, Name1 = "Verkauf (Geld rein)", Name2 = "Kauf (Geld raus)" };
+            chShop = new LineChart { Title = "Shop: Spieler verkaufen / kaufen", LineColor = Theme.Green, Line2Color = Theme.Mint, Compact = true, Name1 = "Verkauf (Geld rein)", Name2 = "Kauf (Geld raus)" };
             var chartCard = ChartCard(chShop);
             chartCard.Dock = DockStyle.Top;
             chartCard.Height = 260;
@@ -362,7 +361,7 @@ namespace RyvenPanel
             var cards = new CardGrid { Dock = DockStyle.Top, MinCardWidth = 200, CardHeight = 124, Gap = 14 };
             cOpens = new KpiCard(Icons.Key, "Crate-Öffnungen", Theme.Accent);
             cCrateMoney = new KpiCard(Icons.Coins, "Geld aus Crates", Theme.Yellow);
-            cCrateAvg = new KpiCard(Icons.Chart, "Ø Geld je Öffnung", Theme.Cyan);
+            cCrateAvg = new KpiCard(Icons.Chart, "Ø Geld je Öffnung", Theme.SoftGreen);
             cards.Controls.AddRange(new Control[] { cOpens, cCrateMoney, cCrateAvg });
             chCrates = new LineChart { Title = "Geld aus Crates im Zeitverlauf", LineColor = Theme.Yellow, Compact = true, Name1 = "Geld" };
             var chartCard = ChartCard(chCrates);
@@ -453,7 +452,8 @@ namespace RyvenPanel
 
             hSub.ForeColor = Theme.Muted;
             hSub.Text = string.Join(", ", J.L(J.Get(d, "servers")).Select(x => Convert.ToString(x))) + "  ·  " + period + "  ·  " +
-                        (int)J.N(d, "accounts") + " Konten  ·  Stand " + DateTime.Now.ToString("HH:mm");
+                        (int)J.N(d, "accounts") + " Konten  ·  Stand " + DateTime.Now.ToString("HH:mm") +
+                        (J.N(J.Get(d, "ausgeblendet"), "anzahl") > 0 ? "  ·  " + (int)J.N(J.Get(d, "ausgeblendet"), "anzahl") + " Team-Konten ausgeblendet" : "");
             var warns = J.L(J.Get(d, "warnings")).Select(x => "⚠ " + Convert.ToString(x)).ToList();
             if (growth > 25 && supplyStart > 0) warns.Insert(0, "⚠ Die Geldmenge ist im Zeitraum um " + Pct(growth) + " gewachsen – es kommt deutlich mehr Geld rein als raus.");
             warn.SetLines(warns);
@@ -507,7 +507,7 @@ namespace RyvenPanel
                 if (J.N(p, "in") <= 0) break;
                 top.Add(new FlowBars.Item
                 {
-                    Name = J.S(p, "name") ?? J.S(p, "uuid"), Dot = Theme.Cyan, In = J.N(p, "in"), Out = J.N(p, "out"),
+                    Name = J.S(p, "name") ?? J.S(p, "uuid"), Dot = Theme.SoftGreen, In = J.N(p, "in"), Out = J.N(p, "out"),
                     Value = M(J.N(p, "in")), ValueColor = Theme.Text
                 });
             }
@@ -548,9 +548,9 @@ namespace RyvenPanel
         {
             switch ((s ?? "").ToLowerInvariant())
             {
-                case "economyshopgui": return Theme.Pink;
+                case "economyshopgui": return Theme.Mint;
                 case "excellentcrates": return Theme.Yellow;
-                case "pay": return Theme.Cyan;
+                case "pay": return Theme.SoftGreen;
                 case "admin": return Theme.Red;
                 case "steuer": return Theme.Red;
                 case "jobs": return Theme.Green;

@@ -937,7 +937,7 @@ namespace RyvenPanel
             {
                 var repo = J.S(d, "Repository") + ":" + J.S(d, "Tag");
                 var id = J.S(d, "ID");
-                rows.Add(Row(new RowTag { Key = id, Dot = repo.Contains("<none>") ? Theme.Muted : Theme.Cyan }, repo, id, J.S(d, "Size"), DeTime(J.S(d, "CreatedSince"))));
+                rows.Add(Row(new RowTag { Key = id, Dot = repo.Contains("<none>") ? Theme.Muted : Theme.SoftGreen }, repo, id, J.S(d, "Size"), DeTime(J.S(d, "CreatedSince"))));
             }
             Fill(iList, rows);
             setStatus(rows.Count + " Images", Theme.Muted);
@@ -1002,7 +1002,7 @@ namespace RyvenPanel
             if (!r.Ok) { setStatus("Netzwerke/Volumes: " + r.Message, Theme.Red); return; }
             var parts = r.Out.Split(new[] { "@@VOL" }, StringSplitOptions.None);
             var nrows = JsonLines(parts[0]).Select(d => Row(new RowTag { Key = J.S(d, "Name"), Dot = Theme.Accent }, J.S(d, "Name"), J.S(d, "Driver"), J.S(d, "Scope"))).ToList();
-            var vrows = parts.Length > 1 ? JsonLines(parts[1]).Select(d => Row(new RowTag { Key = J.S(d, "Name"), Dot = Theme.Cyan }, J.S(d, "Name"), J.S(d, "Driver"))).ToList() : new List<ListViewItem>();
+            var vrows = parts.Length > 1 ? JsonLines(parts[1]).Select(d => Row(new RowTag { Key = J.S(d, "Name"), Dot = Theme.SoftGreen }, J.S(d, "Name"), J.S(d, "Driver"))).ToList() : new List<ListViewItem>();
             Fill(nList, nrows);
             Fill(vList, vrows);
             setStatus(nrows.Count + " Netzwerke, " + vrows.Count + " Volumes", Theme.Muted);
@@ -1042,7 +1042,7 @@ namespace RyvenPanel
             double pct = cores > 0 ? load1 / cores : 0;
             hCpu.Set((pct * 100).ToString("0", CultureInfo.InvariantCulture) + " %", "Load " + load[0] + " / " + load[1] + " / " + load[2] + "  ·  " + cores + " Kerne", Theme.Text);
             hCpu.Bar = pct;
-            hCpu.BarColor = pct > 0.9 ? Theme.Red : pct > 0.7 ? Theme.Yellow : Theme.Cyan;
+            hCpu.BarColor = pct > 0.9 ? Theme.Red : pct > 0.7 ? Theme.Yellow : Theme.SoftGreen;
             var mem = l[2].Split(' ');
             double mt = num(mem[0]), mu = num(mem[1]), ma = num(mem.Length > 2 ? mem[2] : "0");
             hRam.Set(Bytes(mt - ma) + " / " + Bytes(mt), Bytes(ma) + " verfügbar", Theme.Text);

@@ -20,7 +20,7 @@ import base64, glob, json, os, re, shutil, sqlite3, ssl, subprocess, sys, time, 
 
 import yaml
 
-VERSION = "1.0"
+VERSION = "1.2"
 SERVERS = os.environ.get("RP_ECO_SERVERS", "/opt/crafty/docker/servers")   # override only for tests
 CHANGELOG = "/var/lib/ryvenpanel/eco-changes.log"
 GATEWAY_CONF = "/etc/ryvenpanel/gateway.json"
@@ -88,7 +88,8 @@ def backends():
     out = []
     for d in sorted(glob.glob(SERVERS + "/*/")):
         d = d.rstrip("/")
-        if not os.path.isdir(d + "/plugins/Essentials"):
+        if not (os.path.isdir(d + "/plugins/Essentials") or os.path.isfile(d + "/plugins/CityBuildCore/wirtschaft/konten.yml")
+                or os.path.isfile(d + "/plugins/RyvenEco/config.yml")):
             continue
         cfg = {}
         try:
@@ -161,6 +162,108 @@ def sql(query):
 def q(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "''") + "'"
 
+# ───────────────────────────── Team-Konten ausblenden ─────────────────────────────
+AUSNAHMEN = "/etc/ryvenpanel/eco-ausnahmen.json"
+DEFAULT_CFG = {"gruppen": ["owner", "admin"], "ops": True, "stern": True, "spieler": []}
+_excl = None
+_reasons = {}
+
+
+def _lp(query):
+    r = subprocess.run(["docker", "exec", "-i", "mariadb", "sh", "-c", 'exec mariadb -h127.0.0.1 -uroot -p"$MARIADB_ROOT_PASSWORD" luckperms -N -B'],
+                       input=query.encode(), capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise OSError(r.stderr.decode(errors="replace")[:200])
+    return [ln.split("	") for ln in r.stdout.decode(errors="replace").splitlines()]
+
+
+def excluded():
+    """Konten, die Geld erzeugen koennen → (uuids, namen_klein, gruppen); Gruende in _reasons[uuid]. Pro Prozesslauf gecacht.
+    Regeln: LP-Gruppe (inkl. vererbt), Server-OP (ops.json), Permission '*' (direkt oder ueber Gruppe), manuelle Liste."""
+    global _excl
+    if _excl is not None:
+        return _excl
+    cfg = dict(DEFAULT_CFG)
+    try:
+        cfg.update(json.load(open(AUSNAHMEN, encoding="utf-8")))
+    except FileNotFoundError:
+        try:
+            json.dump(DEFAULT_CFG, open(AUSNAHMEN, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+        except OSError:
+            pass
+    except (OSError, ValueError):
+        pass
+    groups = [str(g).lower() for g in (cfg.get("gruppen") or [])]
+    uuids, names = set(), set()
+    why = _reasons
+
+    def mark(u, reason):
+        u = u.lower()
+        uuids.add(u)
+        if reason not in why.setdefault(u, []):
+            why[u].append(reason)
+
+    for x in cfg.get("spieler") or []:
+        x = str(x).strip().lower()
+        if re.fullmatch(r"[0-9a-f-]{32,36}", x):
+            mark(x, "manuell")
+        else:
+            names.add(x)
+    ok = "value=1 and (expiry=0 or expiry>unix_timestamp())"
+    try:
+        parents, star = {}, set()
+        for g, p in _lp("select name, permission from luckperms_group_permissions where %s and (permission='*' or permission like 'group.%%')" % ok):
+            if p == "*":
+                star.add(g.lower())
+            else:
+                parents.setdefault(g.lower(), set()).add(p[6:].lower())
+
+        def closure(gs):
+            seen, todo = set(), list(gs)
+            while todo:
+                g = todo.pop()
+                if g not in seen:
+                    seen.add(g)
+                    todo.extend(parents.get(g, ()))
+            return seen
+        for u, p in _lp("select uuid, permission from luckperms_user_permissions where %s and (permission='*' or permission like 'group.%%')" % ok):
+            u = u.lower()
+            if p == "*":
+                if cfg.get("stern", True):
+                    mark(u, "Permission *")
+                continue
+            for g in closure([p[6:].lower()]):
+                if g in groups:
+                    mark(u, "Gruppe " + g)
+                if g in star and cfg.get("stern", True):
+                    mark(u, "* via Gruppe " + g)
+        for u, n in _lp("select uuid, username from luckperms_players"):
+            if u.lower() in uuids and n:
+                names.add(n.lower())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if cfg.get("ops", True):
+        for f in glob.glob("/opt/crafty/docker/servers/*/ops.json"):
+            try:
+                for o in json.load(open(f, encoding="utf-8")):
+                    if o.get("uuid"):
+                        mark(o["uuid"], "OP")
+                        if o.get("name"):
+                            names.add(str(o["name"]).lower())
+            except (OSError, ValueError, AttributeError):
+                pass
+    _excl = (uuids, names, groups)
+    return _excl
+
+
+def is_excl(uid, name=None):
+    u, n, _ = excluded()
+    if uid and str(uid).lower() in u:
+        return True
+    if name and str(name).lower() in n:
+        return True
+    return bool(uid) and str(uid).startswith("name:") and str(uid)[5:].lower() in n
+
 
 # ───────────────────────────── Essentials accounts ─────────────────────────────
 MONEY_RX = re.compile(r"(?m)^money:\s*'?(-?[0-9.Ee+]+)'?\s*$")
@@ -168,9 +271,25 @@ NAME_RX = re.compile(r"(?m)^last-account-name:\s*'?([^'\n]+)'?\s*$")
 
 
 def accounts(bs):
-    """uuid → {name, balance} summed over the given backends."""
+    """uuid → {name, balance} summed over the given backends. CityBuildCore money (wirtschaft/konten.yml) wins;
+    the old Essentials userdata is only a fallback for servers without it."""
     acc = {}
     for b in bs:
+        kf = b["dir"] + "/plugins/CityBuildCore/wirtschaft/konten.yml"
+        if os.path.isfile(kf):
+            try:
+                data = yaml.safe_load(open(kf, encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                data = None
+            if isinstance(data, dict) and data:
+                for uid, x in data.items():
+                    if not isinstance(x, dict):
+                        continue
+                    a = acc.setdefault(str(uid), {"name": None, "balance": 0.0})
+                    a["balance"] += num(x.get("geld", 0))
+                    if x.get("name") and not a["name"]:
+                        a["name"] = str(x["name"]).strip()
+                continue
         for f in glob.glob(b["dir"] + "/plugins/Essentials/userdata/*.yml"):
             uid = os.path.basename(f)[:-4]
             try:
@@ -185,6 +304,16 @@ def accounts(bs):
             if n and not a["name"]:
                 a["name"] = n.group(1).strip()
     return acc
+
+
+def visible_accounts(bs):
+    """accounts() ohne Team-Konten → (acc, ausgeblendet_anzahl, ausgeblendet_guthaben, namen)."""
+    acc = accounts(bs)
+    hid = [u for u, x in acc.items() if is_excl(u, x["name"])]
+    info = (len(hid), sum(acc[u]["balance"] for u in hid), sorted(acc[u]["name"] or u[:8] for u in hid), {acc[u]["name"] or u[:8]: _reasons.get(u.lower(), ["Name"]) for u in hid})
+    for u in hid:
+        del acc[u]
+    return (acc,) + info
 
 
 # ───────────────────────────── shop (EconomyShopGUI) ─────────────────────────────
@@ -340,7 +469,7 @@ def summary(a):
     bucket = lambda ts: min(nb - 1, max(0, (ts - start) // step))
     buckets = [start + i * step for i in range(nb)]
 
-    acc = accounts(bs)
+    acc, hid_n, hid_bal, hid_names, hid_why = visible_accounts(bs)
     by_name = {}
     for uid, x in acc.items():
         if x["name"]:
@@ -350,6 +479,8 @@ def summary(a):
     flow_out = [0.0] * nb
     sources = {}
     players = {}
+    admin = {"in": 0.0, "out": 0.0, "count": 0}
+    admin_team = {"count": 0}
     warnings = []
 
     def src(name):
@@ -363,6 +494,13 @@ def summary(a):
         return p
 
     def add(ts, uid, name, amount, source):
+        if str(source).lower() == "admin":      # /eco-Befehle vom Team verfälschen Geldfluss und Ranglisten – ausgeblendet
+            admin["in" if amount >= 0 else "out"] += abs(amount)
+            admin["count"] += 1
+            return
+        if is_excl(uid, name):                  # Team-Konten zaehlen nicht zur Wirtschaft
+            admin_team["count"] += 1
+            return
         b = bucket(ts)
         s = src(source)
         p = pl(uid, name)
@@ -411,6 +549,8 @@ def summary(a):
         idx = shop_index(sb)
         cut = tracking.get(sb["name"], now + 1)
         for ts, uid, action, parts in shop_history(sb, start, idx):
+            if is_excl(uid):
+                continue
             money = sum(p[2] for p in parts)
             sell = action == "SELL"
             b = bucket(ts)
@@ -442,6 +582,8 @@ def summary(a):
         by_pair, by_id, rnames = crate_money_map(b)
         cut = tracking.get(b["name"], now + 1)
         for ts, player, rname, rid, cname, cid in crate_openings(b, start):
+            if is_excl(by_name.get(player.lower()), player) or player.lower() in excluded()[1]:
+                continue
             key = (ts, player, rid, cid)
             if key in seen:
                 continue
@@ -498,7 +640,10 @@ def summary(a):
         "version": VERSION, "days": days, "servers": names, "all_servers": [b["name"] for b in backends()], "now": now, "start": start,
         "step": step, "buckets": buckets, "flow_in": flow_in, "flow_out": flow_out, "supply": supply, "supply_start": supply_start,
         "supply_now": current, "accounts": len(acc), "snapshots": snaps, "total_in": total_in, "total_out": total_out,
-        "tracking": tracking, "warnings": warnings, "tax": tax_info(),
+        "tracking": tracking, "warnings": warnings, "tax": tax_info(), "taxes": tax_list(start),
+        "admin_ausgeblendet": admin,
+        "ausgeblendet": {"anzahl": hid_n, "gruppen": excluded()[2], "gruende": hid_why, "guthaben": round(hid_bal, 2), "namen": hid_names, "buchungen": admin_team["count"]},
+        "snapshots_inkl_team": True,
         "sources": sorted((fix_set(s, "players") for s in sources.values()), key=lambda s: -(s["in"] + s["out"])),
         "players": sorted(players.values(), key=lambda p: -p["in"]),
         "richest": richest,
@@ -718,13 +863,29 @@ def additem(a):
     return {"ok": True, "path": path}
 
 
-def tax_info():
+def tax_list(start=None):
+    """Verkaufssteuer je Server (eigene RyvenEco-Config) + im Zeitraum eingenommene Steuer."""
+    got = {}
+    if start is not None:
+        try:
+            for r in sql("select server, sum(-delta), count(*) from eco_tx where source='Steuer' and ts >= %d group by server" % start) or []:
+                got[r[0]] = (num(r[1]), int(num(r[2])))
+        except Fail:
+            pass
+    out = []
     for b in backends():
-        t = (b["eco"].get("sell-tax") or {})
-        if b["eco"]:
-            return {"enabled": bool(t.get("enabled", False)), "percent": num(t.get("percent", 0)),
-                    "sources": [str(s) for s in (t.get("sources") or [])]}
-    return {"enabled": False, "percent": 0.0, "sources": []}
+        if not b["eco"]:
+            continue
+        t = b["eco"].get("sell-tax") or {}
+        g = got.get(b["name"], (0.0, 0))
+        out.append({"server": b["name"], "enabled": bool(t.get("enabled", False)), "percent": num(t.get("percent", 0)),
+                    "sources": [str(s) for s in (t.get("sources") or [])], "eingenommen": g[0], "buchungen": g[1]})
+    return out
+
+
+def tax_info():
+    l = tax_list()
+    return {k: v for k, v in l[0].items() if k in ("enabled", "percent", "sources")} if l else {"enabled": False, "percent": 0.0, "sources": []}
 
 
 def crafty_stdin(server_id, command):
@@ -741,13 +902,18 @@ def crafty_stdin(server_id, command):
 
 
 def settax(a):
-    """Sets the sell tax in every RyvenEco config and reloads it on the servers."""
+    """Setzt die Verkaufssteuer – nur auf dem Server a["server"] (Name) oder ohne Angabe auf allen – und lädt RyvenEco neu."""
     pct = float(a.get("percent", 0))
+    ziel = str(a.get("server") or "")
+    if ziel and ziel not in [b["name"] for b in backends()]:
+        raise Fail("Unbekannter Server: " + ziel)
     if pct < 0 or pct > 90:
         raise Fail("Steuersatz muss zwischen 0 und 90 % liegen.")
     enabled = bool(a.get("enabled", True)) and pct > 0
     done = []
     for b in backends():
+        if ziel and b["name"] != ziel:
+            continue
         f = b["dir"] + "/plugins/RyvenEco/config.yml"
         if not os.path.isfile(f):
             continue

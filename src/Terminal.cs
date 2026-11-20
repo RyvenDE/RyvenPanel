@@ -740,11 +740,11 @@ namespace RyvenPanel
                     var r = new Rectangle(8 + s.CX * cw, 6 + s.CY * ch, cw, ch);
                     if (Focused && cursorOn)
                     {
-                        using (var b = new SolidBrush(Theme.Alpha(Theme.Cyan, 200))) g.FillRectangle(b, r);
+                        using (var b = new SolidBrush(Theme.Alpha(Theme.SoftGreen, 200))) g.FillRectangle(b, r);
                         var c = s.Line(s.CY)[Math.Min(s.CX, s.Cols - 1)];
                         if (c.Ch != ' ' && c.Ch != '\0') TextRenderer.DrawText(g, c.Ch.ToString(), font, r.Location, Back, tf);
                     }
-                    else if (!Focused) using (var pen = new Pen(Theme.Alpha(Theme.Cyan, 160))) g.DrawRectangle(pen, r.X, r.Y, r.Width - 1, r.Height - 1);
+                    else if (!Focused) using (var pen = new Pen(Theme.Alpha(Theme.SoftGreen, 160))) g.DrawRectangle(pen, r.X, r.Y, r.Width - 1, r.Height - 1);
                 }
                 // scrollbar
                 int total = (s.AltActive ? 0 : s.Scrollback.Count) + s.Rows;

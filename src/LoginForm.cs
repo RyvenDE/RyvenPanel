@@ -51,13 +51,13 @@ namespace RyvenPanel
     class TeamSession
     {
         public string Name, Rank;
-        public bool MustChange;
+        public bool MustChange, TfaOn, TfaSetupRequired;
         public readonly HashSet<string> Perms = new HashSet<string>();
         public bool Has(string p) { return Perms.Contains(p); }
 
         public static TeamSession From(object data)
         {
-            var t = new TeamSession { Name = J.S(data, "username"), Rank = J.S(data, "rank"), MustChange = J.B(data, "must_change") };
+            var t = new TeamSession { Name = J.S(data, "username"), Rank = J.S(data, "rank"), MustChange = J.B(data, "must_change"), TfaOn = J.B(data, "tfa_on"), TfaSetupRequired = J.B(data, "tfa_setup_required") };
             foreach (var p in J.L(J.Get(data, "perms"))) t.Perms.Add(Convert.ToString(p));
             return t;
         }
@@ -108,13 +108,13 @@ namespace RyvenPanel
         public LoginForm(Settings s)
         {
             st = s;
-            Text = "RyvenPanel – Anmelden";
+            Text = "PXMX – Anmelden";
             ClientSize = new Size(440, 690);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
 
-            var logo = new GradientText("RyvenMC", Theme.F(28f, FontStyle.Bold)) { Location = new Point(36, 30) };
+            var logo = new GradientText("PXMX", Theme.F(28f, FontStyle.Bold)) { Location = new Point(36, 30) };
             var sub = Theme.Lbl("Server-Panel", Theme.F(10.5f), Theme.Muted, Theme.Bg);
             sub.Location = new Point(42, 86);
             Controls.Add(logo);
@@ -291,6 +291,7 @@ namespace RyvenPanel
                         err.ForeColor = Theme.Muted; err.Text = "Ohne eigenes Passwort ist keine Anmeldung möglich.";
                         return;
                     }
+                    if (!await EnsureTfa(api, t)) { st.TeamToken = null; st.Save(); return; }
                     Finish(api, t);
                     return;
                 }
@@ -320,6 +321,19 @@ namespace RyvenPanel
                 if (!await PinCert(gw, true)) return;
                 var api = new Api(gw, null);
                 var r = await api.PostJson("/panel/login", new Dictionary<string, object> { { "username", user }, { "password", pass } });
+                if (r.Ok && J.B(r.Data, "need_2fa"))
+                {
+                    var ticket = J.S(r.Data, "ticket");
+                    for (int tries = 0; tries < 5; tries++)
+                    {
+                        var code = Dialogs.Ask(this, "Zwei-Faktor-Code", "6-stelliger Code aus der Authenticator-App (oder ein Wiederherstellungscode):", "");
+                        if (string.IsNullOrWhiteSpace(code)) { err.ForeColor = Theme.Muted; err.Text = "Anmeldung abgebrochen."; return; }
+                        r = await api.PostJson("/panel/login/2fa", new Dictionary<string, object> { { "ticket", ticket }, { "code", code.Trim() } });
+                        if (r.Ok || r.Status == 0) break;
+                        if (!(r.Error ?? "").StartsWith("Code falsch")) break;
+                        MessageBox.Show(this, r.Error, "Zwei-Faktor-Code", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
                 if (!r.Ok) { err.Text = r.Status == 0 ? "Team-Server nicht erreichbar: " + r.Error : r.Error; fPass.Box.SelectAll(); fPass.Box.Focus(); return; }
                 api.Token = J.S(r.Data, "token");
                 var t = TeamSession.From(r.Data);
@@ -333,12 +347,25 @@ namespace RyvenPanel
                     err.ForeColor = Theme.Muted; err.Text = "Ohne eigenes Passwort ist keine Anmeldung möglich.";
                     return;
                 }
+                if (!await EnsureTfa(api, t)) { st.TeamToken = null; st.Save(); return; }
                 fPass.Box.Text = "";
                 st.TeamToken = remember.Checked ? api.Token : null;
                 st.Save();
                 Finish(api, t);
             }
             finally { SetBusy(false); }
+        }
+
+        /// <summary>Forces 2FA enrolment when the account's rank requires it (gateway answers TFA_SETUP on everything else).</summary>
+        async Task<bool> EnsureTfa(Api api, TeamSession t)
+        {
+            if (!t.TfaSetupRequired) return true;
+            MessageBox.Show(this, "Für deinen Rang ist die Zwei-Faktor-Anmeldung (2FA) Pflicht.\nBitte richte sie jetzt ein – du brauchst dafür eine Authenticator-App auf deinem Handy.",
+                "2FA erforderlich", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (await ZweiFaktorDialog.Open(this, api, true)) { t.TfaSetupRequired = false; t.TfaOn = true; return true; }
+            await api.Send("POST", "/panel/logout", "", "application/json");
+            err.ForeColor = Theme.Muted; err.Text = "Ohne 2FA ist für deinen Rang keine Anmeldung möglich.";
+            return false;
         }
 
         void Finish(Api api, TeamSession t)
@@ -356,7 +383,10 @@ namespace RyvenPanel
             SetBusy(true);
             try
             {
-                var api = new Api(st.Url, st.Token);
+                string eff;
+                try { eff = await Task.Run(() => Ssh.EffectiveUrl(st, st.Url)); }
+                catch (Exception ex) { err.Text = ex.Message; FocusFirst(); return; }
+                var api = new Api(eff, st.Token) { DisplayUrl = st.Url };
                 var r = await api.Get("/api/v2/users/@me");
                 if (r.Ok)
                 {
@@ -377,6 +407,7 @@ namespace RyvenPanel
             err.Text = "";
             err.ForeColor = Theme.Red;
             string url = fUrl.Box.Text.Trim().TrimEnd('/');
+            if (url.Length == 0 && !string.IsNullOrEmpty(st.SshHost)) url = "https://" + st.SshHost + ":8443";
             if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) url = "https://" + url;
             Uri parsed;
             if (!Uri.TryCreate(url, UriKind.Absolute, out parsed)) { err.Text = "Ungültige Panel-Adresse."; return; }
@@ -385,8 +416,11 @@ namespace RyvenPanel
             SetBusy(true);
             try
             {
-                if (!await PinCert(url, false)) return;
-                var api = new Api(url, null);
+                string eff;
+                try { eff = await Task.Run(() => Ssh.EffectiveUrl(st, url)); }
+                catch (Exception ex) { err.Text = ex.Message; return; }
+                if (!await PinCert(eff, false)) return;
+                var api = new Api(eff, null) { DisplayUrl = url };
                 var body = new Dictionary<string, object> { { "username", fUser.Box.Text.Trim() }, { "password", fPass.Box.Text } };
                 if (fTotp.Box.Text.Trim() != "") body["totp"] = fTotp.Box.Text.Trim();
                 var r = await api.PostJson("/api/v2/auth/login", body);

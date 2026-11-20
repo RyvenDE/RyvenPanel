@@ -118,7 +118,7 @@ namespace RyvenPanel
         {
             var header = Ui.Header("Firewall & Ports", out hSub, new[] { "Ports", "Regeln", "Gesperrte IPs", "Verbindungen" }, out tabs, i => { SetTab(i); });
             cMode = new StatCard("Modus") { BarColor = Theme.Green };
-            cOpen = new StatCard("Öffentliche Ports") { BarColor = Theme.Cyan };
+            cOpen = new StatCard("Öffentliche Ports") { BarColor = Theme.SoftGreen };
             cBlocked = new StatCard("Gesperrte IPs") { BarColor = Theme.Red };
             cDropped = new StatCard("Abgewiesene Pakete") { BarColor = Theme.Yellow };
             var cards = new CardGrid { Dock = DockStyle.Top, MinCardWidth = 150, CardHeight = 104 };

@@ -17,6 +17,7 @@ namespace RyvenPanel
             return new Font(fam, size);
         }
         public static Font Default { get { return font ?? (font = Font(11f)); } }
+        public const string Network = "", Robot = "";
 
         public const string Server = "", Globe = "", People = "", Terminal = "", Folder = "",
             Package = "", Shield = "", Search = "", Power = "", Play = "", Stop = "",
@@ -71,10 +72,10 @@ namespace RyvenPanel
             if (act > 0.01)
             {
                 int h = (int)((r.Height - 14) * act);
-                using (var b = new LinearGradientBrush(new Rectangle(r.X, r.Y, 3, r.Height), Theme.Cyan, Theme.Pink, 90f))
+                using (var b = new LinearGradientBrush(new Rectangle(r.X, r.Y, 3, r.Height), Theme.SoftGreen, Theme.Mint, 90f))
                     g.FillRectangle(b, r.X, r.Y + r.Height / 2 - h / 2, 3, Math.Max(1, h));
             }
-            var ic = Theme.Mix(Theme.Muted, Theme.Cyan, act);
+            var ic = Theme.Mix(Theme.Muted, Theme.SoftGreen, act);
             TextRenderer.DrawText(g, Glyph, Icons.Default, new Rectangle(r.X + 12, r.Y, 22, r.Height), ic, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
             var tc = Theme.Mix(Theme.Mix(Theme.Text2, Theme.Text, hover), Theme.Text, act);
             TextRenderer.DrawText(g, Text, Font, new Rectangle(r.X + 42, r.Y, r.Width - 46, r.Height), tc, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
@@ -182,7 +183,7 @@ namespace RyvenPanel
                 if (sel) using (var p = Theme.RoundRect(rr, 8)) using (var b = new SolidBrush(Theme.CardHi)) g.FillPath(b, p);
                 var ib = new Rectangle(rr.X + 8, rr.Y + 6, 28, rr.Height - 12);
                 using (var p = Theme.RoundRect(ib, 6)) using (var b = new SolidBrush(sel ? Theme.Alpha(Theme.Accent, 90) : Theme.Input)) g.FillPath(b, p);
-                TextRenderer.DrawText(g, it.Glyph, Icons.Font(10f), ib, sel ? Color.White : Theme.Cyan, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, it.Glyph, Icons.Font(10f), ib, sel ? Color.White : Theme.SoftGreen, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 var cat = it.Category ?? "";
                 var csz = TextRenderer.MeasureText(cat, Theme.F(8.25f, FontStyle.Bold));
                 TextRenderer.DrawText(g, it.Title, Theme.F(10.5f, FontStyle.Bold), new Rectangle(rr.X + 46, rr.Y + 3, rr.Width - 60 - csz.Width, 20), Theme.Text, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);

@@ -62,6 +62,49 @@ Teammitglieder bekommen **nie** deinen SSH-Schlüssel oder Crafty-Zugang. Ein kl
 (`gateway/gateway.py`, wird aus dem Panel heraus installiert) prüft jede Aktion gegen die Rechte des Rangs,
 bindet Accounts an IP-Adressen und protokolliert alles.
 
+## API des Team-Dienstes (`gateway/gateway.py`)
+
+HTTPS-Dienst auf dem Server (Standard-Port **8444**, eigenes Zertifikat, das das Panel fest kennt). Er ist der einzige Weg,
+über den Team-Accounts etwas am Server tun – jede Anfrage wird gegen die Rechte des LuckPerms-Rangs geprüft und protokolliert.
+Antworten sind JSON im Crafty-Stil: `{"status":"ok","data":…}` bzw. `{"status":"error","error":"CODE","error_data":"Text"}`.
+
+**Anmeldung:** `POST /panel/login` mit `{"username","password"}` → Sitzungs-Token. Danach bei jeder Anfrage
+`Authorization: Bearer <token>`. Login ist pro IP begrenzt (Sperre nach zu vielen Versuchen), Accounts können an IPs gebunden sein.
+
+| Endpunkt | Recht | Zweck |
+|---|---|---|
+| `GET /panel/config` | – | Anmeldeart und Version des Dienstes |
+| `GET /panel/update` · `GET /panel/update/RyvenPanel.exe` | – | Neueste Panel-Version (`version.json` mit SHA-256) und Download |
+| `POST /panel/login` · `POST /panel/logout` | – / angemeldet | Sitzung starten / beenden |
+| `GET /panel/me` | angemeldet | Eigener Account, Rang und **aktuelle** Rechte |
+| `POST /panel/password` | angemeldet | Eigenes Passwort ändern (beim ersten Login Pflicht) |
+| `POST /panel/eco` `{"cmd","args"}` | siehe unten | Wirtschaft (ruft `eco.py` auf dem Server auf) |
+| `POST /panel/mod` `{"cmd","args"}` | siehe unten | Moderation (ruft `mod.py` auf, Daten aus RyvenLink/RyvenBans) |
+| `/api/v2/…` | je nach Pfad | Durchreiche an die **Crafty-API** mit Rechteprüfung, siehe unten |
+
+**Wirtschaft (`/panel/eco`):** `summary`, `items` → `economy.view` · `setprice`, `additem`, `reload`, `settax` → `economy.edit`.
+Datenquellen: Tabellen `eco_tx` / `eco_supply` von **RyvenEco**, Kontostände, Crate-Öffnungen, Shop-Dateien.
+
+**Moderation (`/panel/mod`):** `overview`, `reports`, `report`, `punishments`, `links`, `player`, `templates` → `moderation.view` ·
+`report_set` → `moderation.reports` · `act` mit `action` = `warn|kick|mute|unmute` → `moderation.punish`, `ban|ipban|unban` → `moderation.ban`
+(führt `ryvenbans exec …` auf dem Proxy aus).
+
+**Crafty-Durchreiche (`/api/v2/servers/<id>/…`):**
+
+| Pfad | Recht |
+|---|---|
+| `GET /api/v2/servers`, `GET …/<id>`, `…/stats`, `…/history` | `servers.view` |
+| `GET …/logs` | `console.view` |
+| `POST …/stdin` | `console.command` (Befehle auf der Sperrliste nur mit `console.command.unrestricted`) |
+| `POST …/action/start_server\|stop_server\|restart_server` | `server.control` |
+| `POST …/action/kill_server` | `server.kill` |
+| `POST …/action/backup_server`, `GET …/backups` | `server.backup` |
+| `POST …/files` (lesen) | `files.view` |
+| `PUT/PATCH/DELETE …/files`, `…/files/…` | `files.edit` |
+
+Alle anderen Pfade werden abgelehnt. **Owner-Verwaltung** (Accounts, Rang-Rechte, IP-Freigaben, Einstellungen) läuft nicht über HTTP,
+sondern lokal per SSH: `python3 gateway.py admin <roles|user|ip|config> [base64-json]`.
+
 ## Voraussetzungen
 
 **PC:** Windows 10/11 (.NET Framework 4.8 ist bereits enthalten). Für Terminal, Dateien, Docker, Firewall und
@@ -85,7 +128,7 @@ Wirtschaft den Windows-Client „OpenSSH“ (*Einstellungen → Optionale Featur
 
 1. Versionsnummer in `src/Version.cs` erhöhen
 2. `build.ps1` ausführen
-3. Neue `RyvenPanel.exe` starten → „Update verteilen“ bestätigen
+3. Neue `PXMX.exe` starten → „Update verteilen“ bestätigen
 
 Das Update landet auf deinem Server (`/opt/ryvenpanel/dist`), das Team lädt es über den Team-Dienst
 (gleiches, fest hinterlegtes Zertifikat wie beim Login) und prüft die SHA-256-Prüfsumme.
@@ -98,7 +141,7 @@ Keine Installation nötig – gebaut wird mit dem C#-Compiler, der in Windows st
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Ergebnis: `RyvenPanel.exe` und `dist/RyvenPanel-Setup-<version>.exe`.
+Ergebnis: `PXMX.exe` und `dist/RyvenPanel-Setup-<version>.exe`.
 
 ## Lizenz
 
